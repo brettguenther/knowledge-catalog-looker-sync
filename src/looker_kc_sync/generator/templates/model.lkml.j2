@@ -1,0 +1,17 @@
+# LookML Model Definition
+connection: "{{ connection_name }}"
+
+include: "/views/base/*.base.view.lkml"
+include: "/views/curated/*.view.lkml"
+
+# Explores
+explore: orders {
+  label: "Orders Analytics"
+  description: "Certified orders explore with line item details for Conversational Analytics."
+
+  join: order_items {
+    relationship: one_to_many
+    type: left_outer
+    sql_on: ${orders.order_id} = ${order_items.order_id} ;;
+  }
+}

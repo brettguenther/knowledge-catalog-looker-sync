@@ -1,0 +1,53 @@
+<PROJECT_ID>.us-central1.semantic-curation:
+  data:
+    status: CERTIFIED
+    business_label: "Orders"
+    business_description: "Core sales and order transaction dataset."
+    governance_tags: ["certified", "core_bi"]
+
+<PROJECT_ID>.us-central1.semantic-curation@Schema.order_id:
+  data:
+    status: CERTIFIED
+    business_label: "Order ID"
+    business_description: "Unique alphanumeric order identifier."
+    governance_tags: ["certified", "primary_key"]
+
+<PROJECT_ID>.us-central1.semantic-curation@Schema.user_id:
+  data:
+    status: CERTIFIED
+    business_label: "Customer User ID"
+    business_description: "Identifier of customer who placed the order."
+    synonyms: ["customer id", "buyer id", "account id"]
+    governance_tags: ["certified", "foreign_key"]
+
+<PROJECT_ID>.us-central1.semantic-curation@Schema.order_date:
+  data:
+    status: CERTIFIED
+    business_label: "Order Placed Date"
+    business_description: "Timestamp when customer placed order."
+    synonyms: ["purchase date", "transaction time", "order date"]
+    governance_tags: ["certified", "date"]
+
+<PROJECT_ID>.us-central1.semantic-curation@Schema.status:
+  data:
+    status: CERTIFIED
+    business_label: "Order Status"
+    business_description: "Fulfillment state of the customer order."
+    synonyms: ["order condition", "fulfillment status", "state"]
+    allowed_values: ["PENDING", "PROCESSING", "SHIPPED", "DELIVERED", "CANCELLED", "REFUNDED"]
+    governance_tags: ["certified", "operations"]
+
+<PROJECT_ID>.us-central1.semantic-curation@Schema.order_amount:
+  data:
+    status: CERTIFIED
+    business_label: "Order Amount"
+    business_description: "Total order gross amount in USD before shipping and taxes."
+    synonyms: ["revenue", "sales", "order total", "gross bookings"]
+    format_pattern: "usd"
+    governance_tags: ["certified", "kpi", "finance"]
+
+<PROJECT_ID>.us-central1.semantic-curation@Schema.internal_warehouse_id:
+  data:
+    status: DRAFT
+    business_label: "Warehouse Location Code"
+    business_description: "Internal warehouse routing code."

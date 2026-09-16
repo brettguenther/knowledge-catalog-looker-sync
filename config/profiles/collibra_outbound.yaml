@@ -1,0 +1,51 @@
+profile_name: "collibra_outbound"
+description: "Mapping profile for Collibra outbound Dataplex aspect ingestion"
+auto_generate_kpi_measures: false
+
+certification_rule:
+  path: "collibra_governance.status"
+  operator: "in"
+  values: ["Approved", "Certified", "Accepted"]
+
+exclusions:
+  - path: "dataplex.policy_tags"
+    operator: "contains"
+    values: ["pii_restricted"]
+
+field_mappings:
+  label:
+    sources:
+      - path: "collibra_business_term.signifier"
+      - path: "collibra_business_term.name"
+      - transform: "title_case(column_name)"
+
+  description:
+    sources:
+      - path: "collibra_business_term.definition"
+      - path: "collibra_business_term.description"
+      - path: "column.description"
+
+  synonyms:
+    sources:
+      - path: "collibra_business_term.aliases"
+        type: "delimited_string"
+        delimiter: ","
+
+  tags:
+    static_tags: ["source_collibra"]
+    dynamic_tags:
+      - path: "collibra_governance.status"
+        prefix: "collibra_status:"
+
+  suggestions:
+    sources:
+      - path: "collibra_code_list.values"
+        type: "list"
+
+  value_format_name:
+    sources:
+      - path: "collibra_business_term.format"
+    lookup_map:
+      Monetary: "usd"
+      Percentage: "percent_2"
+      Count: "decimal_0"

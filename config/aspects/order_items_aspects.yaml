@@ -1,0 +1,56 @@
+<PROJECT_ID>.us-central1.semantic-curation:
+  data:
+    status: CERTIFIED
+    business_label: "Order Line Items"
+    business_description: "Granular product items belonging to each customer order."
+    governance_tags: ["certified", "sales"]
+
+<PROJECT_ID>.us-central1.semantic-curation@Schema.order_item_id:
+  data:
+    status: CERTIFIED
+    business_label: "Order Item ID"
+    business_description: "Unique line item identifier."
+    governance_tags: ["certified", "primary_key"]
+
+<PROJECT_ID>.us-central1.semantic-curation@Schema.order_id:
+  data:
+    status: CERTIFIED
+    business_label: "Order Reference ID"
+    business_description: "Parent order identifier."
+    governance_tags: ["certified", "foreign_key"]
+
+<PROJECT_ID>.us-central1.semantic-curation@Schema.product_category:
+  data:
+    status: CERTIFIED
+    business_label: "Product Category"
+    business_description: "Merchandise department category."
+    synonyms: ["department", "item category", "product type"]
+    allowed_values: ["Apparel", "Footwear", "Electronics", "Home & Kitchen", "Accessories"]
+    governance_tags: ["certified", "merchandise"]
+
+<PROJECT_ID>.us-central1.semantic-curation@Schema.sale_price:
+  data:
+    status: CERTIFIED
+    business_label: "Sale Price"
+    business_description: "Unit retail price charged to customer in USD."
+    synonyms: ["unit price", "retail price", "item price"]
+    format_pattern: "usd"
+    governance_tags: ["certified", "finance", "kpi"]
+
+<PROJECT_ID>.us-central1.semantic-curation@Schema.cost:
+  data:
+    status: CERTIFIED
+    business_label: "Unit Cost"
+    business_description: "Cost of goods sold (COGS) for single item in USD."
+    synonyms: ["item cost", "cogs", "wholesale cost"]
+    format_pattern: "usd"
+    governance_tags: ["certified", "finance"]
+
+<PROJECT_ID>.us-central1.semantic-curation@Schema.quantity:
+  data:
+    status: CERTIFIED
+    business_label: "Item Quantity"
+    business_description: "Number of units purchased in line item."
+    synonyms: ["units", "item count", "volume"]
+    format_pattern: "decimal_0"
+    governance_tags: ["certified", "operations"]

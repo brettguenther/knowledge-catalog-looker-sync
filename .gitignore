@@ -1,0 +1,67 @@
+# Environments and Secrets
+.env
+.env.*
+!.env.example
+*.secrets*
+*credentials*.json
+service_account*.json
+.env_looker
+.env_secrets
+*.env_looker
+*.env_secrets
+looker.ini
+*.looker.ini
+*.pem
+*.key
+
+# Python Bytecode and Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+
+# Packaging and Build
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Testing, Linting and Coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+
+# Local Output & Temp Data
+output/
+scratch/
+tmp/
+*.log
+
+# IDE & Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Internal Spec & Scratch
+.resources/
+
+# Local Runtime Configuration
+config/sync_config.yaml

@@ -1,0 +1,62 @@
+{
+  "name": "semantic-curation",
+  "type": "record",
+  "recordFields": [
+    {
+      "name": "status",
+      "type": "enum",
+      "index": 1,
+      "enumValues": [
+        { "name": "DRAFT", "index": 1 },
+        { "name": "IN_REVIEW", "index": 2 },
+        { "name": "CERTIFIED", "index": 3 },
+        { "name": "DEPRECATED", "index": 4 }
+      ],
+      "constraints": {
+        "required": true
+      }
+    },
+    {
+      "name": "business_label",
+      "type": "string",
+      "index": 2
+    },
+    {
+      "name": "business_description",
+      "type": "string",
+      "index": 3
+    },
+    {
+      "name": "synonyms",
+      "type": "array",
+      "index": 4,
+      "arrayItems": {
+        "name": "item",
+        "type": "string"
+      }
+    },
+    {
+      "name": "allowed_values",
+      "type": "array",
+      "index": 5,
+      "arrayItems": {
+        "name": "item",
+        "type": "string"
+      }
+    },
+    {
+      "name": "format_pattern",
+      "type": "string",
+      "index": 6
+    },
+    {
+      "name": "governance_tags",
+      "type": "array",
+      "index": 7,
+      "arrayItems": {
+        "name": "item",
+        "type": "string"
+      }
+    }
+  ]
+}

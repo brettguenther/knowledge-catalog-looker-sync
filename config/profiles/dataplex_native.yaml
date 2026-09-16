@@ -1,0 +1,33 @@
+profile_name: "dataplex_native"
+description: "Mapping profile for native Dataplex descriptions, overviews, and BigQuery schemas"
+auto_generate_kpi_measures: false
+
+certification_rule:
+  path: "dataplex_stewardship.curated"
+  operator: "equals"
+  values: [true]
+
+exclusions:
+  - path: "dataplex.policy_tags"
+    operator: "contains"
+    values: ["pii_restricted"]
+
+field_mappings:
+  label:
+    sources:
+      - path: "dataplex_stewardship.display_name"
+      - transform: "title_case(column_name)"
+
+  description:
+    sources:
+      - path: "dataplex_stewardship.description"
+      - path: "dataplex.overview.content"
+      - path: "column.description"
+
+  synonyms:
+    sources:
+      - path: "dataplex_stewardship.synonyms"
+        type: "list"
+
+  tags:
+    static_tags: ["dataplex_curated"]
