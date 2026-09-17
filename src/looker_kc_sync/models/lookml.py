@@ -20,6 +20,25 @@ class LookMLDimension(BaseModel):
     group_label: Optional[str] = None
 
 
+class LookMLDimensionGroup(BaseModel):
+    """Represents a LookML dimension_group (time or duration)."""
+    name: str
+    type: str = "time"
+    timeframes: List[str] = Field(
+        default_factory=lambda: ["raw", "time", "date", "week", "month", "quarter", "year"]
+    )
+    sql: str
+    datatype: Optional[str] = None  # timestamp, datetime, date, epoch, yyyymmdd
+    hidden: bool = False
+    label: Optional[str] = None
+    description: Optional[str] = None
+    synonyms: List[str] = Field(default_factory=list)
+    tags: List[str] = Field(default_factory=list)
+    group_label: Optional[str] = None
+    convert_tz: Optional[bool] = None
+    intervals: List[str] = Field(default_factory=list)
+
+
 class LookMLMeasure(BaseModel):
     """Represents a LookML measure."""
     name: str
@@ -44,5 +63,6 @@ class LookMLView(BaseModel):
     description: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
     dimensions: List[LookMLDimension] = Field(default_factory=list)
+    dimension_groups: List[LookMLDimensionGroup] = Field(default_factory=list)
     measures: List[LookMLMeasure] = Field(default_factory=list)
     source_entry: str = ""

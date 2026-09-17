@@ -21,9 +21,6 @@ COPY config/ ./config/
 # Ensure default sync_config.yaml exists from template if not provided
 RUN cp -n config/sync_config.yaml.example config/sync_config.yaml || true
 
-# Install looker-kc-sync package
-RUN pip install --no-cache-dir --no-deps .
-
 ENV PYTHONPATH=/app/src
 ENV PYTHONUNBUFFERED=1
 

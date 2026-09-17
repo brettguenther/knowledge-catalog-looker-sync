@@ -39,6 +39,37 @@ view: {{ view.view_name }} {
 {% endif %}
   }
 {% endfor %}
+{% for dg in view.dimension_groups %}
+
+  dimension_group: {{ dg.name }} {
+    type: {{ dg.type }}
+{% if dg.timeframes %}
+    timeframes: [{{ dg.timeframes | join(", ") }}]
+{% endif %}
+    sql: {{ dg.sql }} ;;
+{% if dg.datatype %}
+    datatype: {{ dg.datatype }}
+{% endif %}
+{% if not dg.hidden %}
+    hidden: no
+{% if dg.label %}
+    label: "{{ dg.label }}"
+{% endif %}
+{% if dg.description %}
+    description: "{{ dg.description }}"
+{% endif %}
+{% if dg.synonyms %}
+    synonyms: [{% for s in dg.synonyms %}"{{ s }}"{% if not loop.last %}, {% endif %}{% endfor %}]
+{% endif %}
+{% if dg.tags %}
+    tags: [{% for t in dg.tags %}"{{ t }}"{% if not loop.last %}, {% endif %}{% endfor %}]
+{% endif %}
+{% if dg.group_label %}
+    group_label: "{{ dg.group_label }}"
+{% endif %}
+{% endif %}
+  }
+{% endfor %}
 {% for m in view.measures %}
 
   measure: {{ m.name }} {

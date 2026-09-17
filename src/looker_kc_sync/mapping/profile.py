@@ -59,6 +59,13 @@ class MappingProfile(BaseModel):
     profile_name: str
     description: Optional[str] = ""
     auto_generate_kpi_measures: bool = False
+    use_dimension_groups: bool = True
+    default_timeframes: List[str] = Field(
+        default_factory=lambda: ["raw", "time", "date", "week", "month", "quarter", "year"]
+    )
+    date_timeframes: List[str] = Field(
+        default_factory=lambda: ["raw", "date", "week", "month", "quarter", "year"]
+    )
     certification_rule: CertificationRule
     exclusions: List[ExclusionRule] = Field(default_factory=list)
     field_mappings: FieldMappings = Field(default_factory=FieldMappings)

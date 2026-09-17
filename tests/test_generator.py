@@ -5,7 +5,12 @@ from pathlib import Path
 import lkml
 
 from looker_kc_sync.generator.engine import LookMLGenerator
-from looker_kc_sync.models.lookml import LookMLDimension, LookMLMeasure, LookMLView
+from looker_kc_sync.models.lookml import (
+    LookMLDimension,
+    LookMLDimensionGroup,
+    LookMLMeasure,
+    LookMLView,
+)
 
 
 class TestLookMLGenerator(unittest.TestCase):
@@ -30,12 +35,20 @@ class TestLookMLGenerator(unittest.TestCase):
                     synonyms=["client id", "user id"],
                     tags=["certified"],
                 ),
-                LookMLDimension(
-                    name="created_at",
-                    type="date_time",
+            ],
+            dimension_groups=[
+                LookMLDimensionGroup(
+                    name="created",
+                    type="time",
+                    timeframes=["raw", "time", "date", "week", "month", "quarter", "year"],
                     sql="${TABLE}.created_at",
-                    hidden=True,
-                ),
+                    datatype="timestamp",
+                    hidden=False,
+                    label="Customer Created",
+                    description="When customer registered",
+                    synonyms=["signup date", "registration time"],
+                    tags=["certified", "date"],
+                )
             ],
             measures=[
                 LookMLMeasure(

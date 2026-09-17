@@ -23,7 +23,7 @@ flowchart TD
 
 ## Key Features
 
-- **Declarative Mapping Engine**: Profile-driven architecture (`config/profiles/*.yaml`) decoupling source catalog taxonomy from LookML generation. Supports Dataplex custom aspects, Collibra outbound sync schemas, and native Dataplex metadata.
+- **Declarative Mapping Engine**: Profile-driven architecture (`config/profiles/*.yaml`) decoupling source catalog taxonomy from LookML generation. Supports Dataplex custom aspects, Collibra outbound sync schemas, and native Dataplex metadata. See [docs/PROFILES.md](docs/PROFILES.md) for complete schema and configuration guide.
 - **Conversational Analytics Enablement**:
   - Automatically sets `fields_hidden_by_default: yes` at the view level to avoid field bloat.
   - Selectively unhides only certified fields (`hidden: no`) satisfying governance rules.
@@ -50,8 +50,9 @@ looker-kc/
 ├── main.py                            # CLI entrypoint wrapper
 ├── pyproject.toml                     # Python package metadata and dependencies
 ├── requirements.txt                   # Pinned dependency requirements
+├── docs/                              # Detailed architecture documentation
+│   └── PROFILES.md                    # Declarative mapping profiles guide & schema
 ├── config/
-│   ├── sync_config.yaml               # Runtime orchestration configuration
 │   ├── sync_config.yaml.example       # Configuration template
 │   ├── aspect_types/                  # Dataplex Aspect Type definitions
 │   │   └── semantic_curation_template.json

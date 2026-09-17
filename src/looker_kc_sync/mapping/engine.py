@@ -8,12 +8,19 @@ from looker_kc_sync.mapping.rules import (
     resolve_path_value,
 )
 from looker_kc_sync.mapping.transformers import (
+    clean_dimension_group_label,
+    derive_dimension_group_name,
     map_lookup_value,
     parse_delimited_list,
     title_case,
 )
 from looker_kc_sync.models.catalog import CatalogEntry, SchemaColumn
-from looker_kc_sync.models.lookml import LookMLDimension, LookMLMeasure, LookMLView
+from looker_kc_sync.models.lookml import (
+    LookMLDimension,
+    LookMLDimensionGroup,
+    LookMLMeasure,
+    LookMLView,
+)
 
 
 DATA_TYPE_MAP = {
@@ -105,7 +112,10 @@ class SemanticMapper:
                     table_tags.extend(v["governance_tags"])
 
         dimensions: List[LookMLDimension] = []
+        dimension_groups: List[LookMLDimensionGroup] = []
         measures: List[LookMLMeasure] = []
+
+        assigned_names: set = set()
 
         for col in entry.columns:
             col_aspects = entry.column_aspects.get(col.name, {})
@@ -130,8 +140,36 @@ class SemanticMapper:
             suggestions = self._resolve_attribute(self.profile.field_mappings.suggestions, col_aspects, col) or []
             format_name = self._resolve_attribute(self.profile.field_mappings.value_format_name, col_aspects, col)
 
-            dim_type = DATA_TYPE_MAP.get(col.data_type.upper(), "string")
+            raw_type = col.data_type.upper().split("(")[0].strip()
+
+            # Handle temporal types as dimension groups
+            if self.profile.use_dimension_groups and raw_type in ("TIMESTAMP", "DATETIME", "DATE"):
+                other_col_names = {c.name.lower() for c in entry.columns if c.name.lower() != col.name.lower()} | assigned_names
+                dg_name = derive_dimension_group_name(col.name, other_col_names)
+                assigned_names.add(dg_name)
+
+                datatype = "timestamp" if raw_type == "TIMESTAMP" else ("date" if raw_type == "DATE" else "datetime")
+                timeframes = self.profile.date_timeframes if raw_type == "DATE" else self.profile.default_timeframes
+                dg_label = clean_dimension_group_label(label)
+
+                dim_group = LookMLDimensionGroup(
+                    name=dg_name,
+                    type="time",
+                    timeframes=timeframes,
+                    sql=f"${{TABLE}}.{col.name}",
+                    datatype=datatype,
+                    hidden=not is_certified,
+                    label=dg_label if is_certified else None,
+                    description=description if is_certified else None,
+                    synonyms=synonyms if is_certified else [],
+                    tags=tags if is_certified else [],
+                )
+                dimension_groups.append(dim_group)
+                continue
+
+            dim_type = DATA_TYPE_MAP.get(raw_type, "string")
             is_pk = (col.name.lower() == f"{view_name}_id") or (col.name.lower() == "id") or ("primary_key" in tags)
+            assigned_names.add(col.name.lower())
 
             dim = LookMLDimension(
                 name=col.name,
@@ -176,6 +214,7 @@ class SemanticMapper:
             description=table_desc,
             tags=sorted(list(set(table_tags))),
             dimensions=dimensions,
+            dimension_groups=dimension_groups,
             measures=measures,
             source_entry=entry.resource_name,
         )
