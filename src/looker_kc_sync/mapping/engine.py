@@ -364,12 +364,22 @@ class SemanticMapper:
                 dimension_groups.append(dg)
 
                 if (is_part or is_clust) and self.profile.auto_generate_partition_cluster_filters:
+                    # Prefer the un-truncated raw timeframe (${dg.name}_raw) when available to prevent
+                    # Looker string-casting and ensure direct database partition pruning on BigQuery.
+                    # If raw is not present, use explicit LookML field type reference (${dg.name}_date::date).
+                    if "raw" in dg.timeframes:
+                        target_dim = f"{dg.name}_raw"
+                    elif "date" in dg.timeframes:
+                        target_dim = f"{dg.name}_date::date"
+                    else:
+                        target_dim = f"{dg.name}::date"
+
                     filters.append(
                         self._synthesize_key_filter(
                             col=col,
                             meta=meta,
                             raw_type=raw_type,
-                            target_dim_name=f"{dg.name}_date",
+                            target_dim_name=target_dim,
                             is_partition=is_part,
                             is_cluster=is_clust,
                         )
@@ -382,12 +392,14 @@ class SemanticMapper:
             dimensions.append(dim)
 
             if (is_part or is_clust) and self.profile.auto_generate_partition_cluster_filters:
+                # If scalar temporal column, explicitly state type (::date) to prevent Looker string-casting
+                target_dim = f"{dim.name}::date" if raw_type in ("TIMESTAMP", "DATETIME", "DATE") else dim.name
                 filters.append(
                     self._synthesize_key_filter(
                         col=col,
                         meta=meta,
                         raw_type=raw_type,
-                        target_dim_name=dim.name,
+                        target_dim_name=target_dim,
                         is_partition=is_part,
                         is_cluster=is_clust,
                     )

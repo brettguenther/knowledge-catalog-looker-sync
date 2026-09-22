@@ -268,7 +268,7 @@ class TestSemanticMappingEngine(unittest.TestCase):
         sale_filter = next(f for f in fact_view.filters if f.name == "sale_date_filter")
         self.assertEqual(sale_filter.type, "date")
         self.assertIsNone(sale_filter.suggest_dimension)
-        self.assertEqual(sale_filter.sql, "{% condition sale_date_filter %} ${sale_date} {% endcondition %}")
+        self.assertEqual(sale_filter.sql, "{% condition sale_date_filter %} ${sale_raw} {% endcondition %}")
 
         store_filter = next(f for f in fact_view.filters if f.name == "store_id_filter")
         self.assertEqual(store_filter.type, "string")
@@ -283,6 +283,16 @@ class TestSemanticMappingEngine(unittest.TestCase):
         dim_store_id = next(d for d in fact_view.dimensions if d.name == "store_id")
         self.assertFalse(dim_store_id.hidden)
         self.assertIn("cluster_key", dim_store_id.tags)
+
+        # Verify scalar temporal dimension filter uses explicit ::date reference when dimension groups are disabled
+        self.profile.use_dimension_groups = False
+        self.profile.auto_generate_partition_cluster_filters = True
+        scalar_mapper = SemanticMapper(self.profile)
+        scalar_fact_view = scalar_mapper.map_entry_to_view(fact_entry)
+        scalar_sale_filter = next(f for f in scalar_fact_view.filters if f.name == "sale_date_filter")
+        self.assertEqual(scalar_sale_filter.type, "date")
+        self.assertEqual(scalar_sale_filter.sql, "{% condition sale_date_filter %} ${sale_date::date} {% endcondition %}")
+        self.profile.use_dimension_groups = True
 
         # Verify base explore generation with join and partition always_filter
         explore = mapper.map_entry_to_explore(
