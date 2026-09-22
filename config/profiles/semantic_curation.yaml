@@ -3,7 +3,7 @@ description: "Reference standard mapping profile for Knowledge Catalog semantic-
 auto_generate_kpi_measures: false
 use_dimension_groups: true
 use_ai_data_documentation: true
-auto_generate_partition_cluster_filters: false
+auto_generate_partition_cluster_filters: true
 always_filter_on_partition_key: false
 
 explore_policy:
