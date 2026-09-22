@@ -1,14 +1,15 @@
 """Git and GitHub Provider Client for automated branch and PR creation."""
 
+import base64
 import datetime
 import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
-from typing import Any, Dict, Optional, Tuple
-import urllib.request
+from typing import Any, Dict, List, Optional
 import urllib.error
+import urllib.request
 
 
 class GitHubProvider:
@@ -69,6 +70,54 @@ class GitHubProvider:
 
         return None
 
+    def _redact(self, text: str) -> str:
+        """Scrubs any occurrences of the token or encoded token from string outputs."""
+        if not text:
+            return ""
+        scrubbed = text
+        if self.token:
+            scrubbed = scrubbed.replace(self.token, "[REDACTED_TOKEN]")
+            auth_b64 = base64.b64encode(f"x-access-token:{self.token}".encode()).decode()
+            scrubbed = scrubbed.replace(auth_b64, "[REDACTED_AUTH]")
+        return scrubbed
+
+    def _run_git(
+        self,
+        args: List[str],
+        cwd: Optional[Path] = None,
+        custom_env: Optional[Dict[str, str]] = None,
+    ) -> subprocess.CompletedProcess:
+        """Executes a git command securely, redacting any secrets from errors and logs."""
+        env = dict(os.environ)
+        if custom_env:
+            env.update(custom_env)
+
+        # Configure HTTP Basic Auth header safely in the process environment
+        if self.token:
+            auth_b64 = base64.b64encode(f"x-access-token:{self.token}".encode()).decode()
+            env.update({
+                "GIT_CONFIG_COUNT": "2",
+                "GIT_CONFIG_KEY_0": "http.extraHeader",
+                "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {auth_b64}",
+                "GIT_CONFIG_KEY_1": "credential.helper",
+                "GIT_CONFIG_VALUE_1": "",
+                "GIT_TERMINAL_PROMPT": "0",
+            })
+
+        res = subprocess.run(
+            args,
+            cwd=cwd,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        if res.returncode != 0:
+            redacted_cmd = " ".join(self._redact(a) for a in args)
+            redacted_err = self._redact(res.stderr or res.stdout)
+            raise RuntimeError(f"Git command failed ({redacted_cmd}):\n{redacted_err}")
+
+        return res
+
     def create_pull_request(
         self,
         lookml_files: Dict[str, str],
@@ -102,14 +151,14 @@ class GitHubProvider:
         
         try:
             temp_dir.mkdir(parents=True, exist_ok=True)
-            auth_repo_url = f"https://x-access-token:{self.token}@github.com/{self.repo_slug}.git"
+            repo_url = f"https://github.com/{self.repo_slug}.git"
 
-            # 1. Clone base branch
-            clone_cmd = ["git", "clone", "--depth=1", "--branch", base_branch, auth_repo_url, str(temp_dir)]
-            subprocess.run(clone_cmd, capture_output=True, text=True, check=True)
+            # 1. Clone base branch securely (token in environment)
+            clone_cmd = ["git", "clone", "--depth=1", "--branch", base_branch, repo_url, str(temp_dir)]
+            self._run_git(clone_cmd)
 
             # 2. Checkout new feature branch
-            subprocess.run(["git", "checkout", "-b", branch_name], cwd=temp_dir, capture_output=True, text=True, check=True)
+            self._run_git(["git", "checkout", "-b", branch_name], cwd=temp_dir)
 
             # 3. Write generated LookML files
             changed = False
@@ -125,10 +174,10 @@ class GitHubProvider:
             for rel_path in lookml_files.keys():
                 target_file = temp_dir / rel_path
                 if target_file.exists():
-                    subprocess.run(["git", "add", rel_path], cwd=temp_dir, check=True)
+                    self._run_git(["git", "add", rel_path], cwd=temp_dir)
 
-            diff_stat_res = subprocess.run(["git", "diff", "--cached", "--stat"], cwd=temp_dir, capture_output=True, text=True)
-            diff_cached_res = subprocess.run(["git", "diff", "--cached"], cwd=temp_dir, capture_output=True, text=True)
+            diff_stat_res = self._run_git(["git", "diff", "--cached", "--stat"], cwd=temp_dir)
+            diff_cached_res = self._run_git(["git", "diff", "--cached"], cwd=temp_dir)
             
             if not diff_stat_res.stdout.strip():
                 return {
@@ -140,14 +189,14 @@ class GitHubProvider:
             # 5. Commit changes
             git_user = os.environ.get("GIT_AUTHOR_NAME", "Knowledge Catalog Sync Bot")
             git_email = os.environ.get("GIT_AUTHOR_EMAIL", "kc-sync-bot@google.com")
-            subprocess.run(["git", "config", "user.name", git_user], cwd=temp_dir, check=True)
-            subprocess.run(["git", "config", "user.email", git_email], cwd=temp_dir, check=True)
+            self._run_git(["git", "config", "user.name", git_user], cwd=temp_dir)
+            self._run_git(["git", "config", "user.email", git_email], cwd=temp_dir)
             commit_msg = f"feat(lookml): sync knowledge catalog metadata [skip ci]\n\nAutomated metadata sync: {timestamp}"
-            subprocess.run(["git", "commit", "-m", commit_msg], cwd=temp_dir, capture_output=True, text=True, check=True)
+            self._run_git(["git", "commit", "-m", commit_msg], cwd=temp_dir)
 
-            # 6. Push to remote
-            push_cmd = ["git", "push", "-u", auth_repo_url, branch_name]
-            subprocess.run(push_cmd, cwd=temp_dir, capture_output=True, text=True, check=True)
+            # 6. Push to remote origin
+            push_cmd = ["git", "push", "-u", "origin", branch_name]
+            self._run_git(push_cmd, cwd=temp_dir)
 
             # 7. Open Pull Request via GitHub API
             pr_title = title or f"KC Metadata Sync - {timestamp}"
@@ -177,8 +226,12 @@ class GitHubProvider:
                 method="POST",
             )
 
-            with urllib.request.urlopen(req) as resp:
-                resp_data = json.loads(resp.read().decode("utf-8"))
+            try:
+                with urllib.request.urlopen(req) as resp:
+                    resp_data = json.loads(resp.read().decode("utf-8"))
+            except urllib.error.HTTPError as e:
+                err_body = self._redact(e.read().decode("utf-8", errors="replace"))
+                raise RuntimeError(f"GitHub API Pull Request creation failed (HTTP {e.code}): {err_body}") from None
 
             pr_url = resp_data.get("html_url", "")
             return {

@@ -81,6 +81,63 @@ class TestLookMLGenerator(unittest.TestCase):
         parsed_model = lkml.load(model)
         self.assertEqual(parsed_model["connection"], "test_conn")
 
+    def test_generator_handles_quotes_and_newlines(self):
+        view = LookMLView(
+            view_name="special_chars",
+            base_view_name="special_chars_base",
+            sql_table_name="`my_proj.my_ds.special_chars`",
+            description='Table description with "double quotes" and\nmultiple lines',
+            dimensions=[
+                LookMLDimension(
+                    name="complex_col",
+                    type="string",
+                    sql="${TABLE}.complex_col",
+                    hidden=False,
+                    label='Field "VIP" Label',
+                    description='Steward note: "Special" character & quote handling\nSecond line',
+                    synonyms=['alias "one"', "regular alias"],
+                    suggestions=['Option "A"', 'Option "B"'],
+                )
+            ],
+        )
+
+        rendered = self.generator.render_base_view(view)
+        # Verify it successfully parses in lkml with no syntax error
+        self.assertIn('label: "Field \\"VIP\\" Label"', rendered)
+        self.assertIn('"alias \\"one\\""', rendered)
+        parsed = lkml.load(rendered)
+        self.assertEqual(parsed["views"][0]["name"], "special_chars")
+        dim = parsed["views"][0]["dimensions"][0]
+        self.assertIn("VIP", dim["label"])
+        self.assertIn("Special", dim["description"])
+
+    def test_generator_idempotency_no_timestamp(self):
+        view = LookMLView(
+            view_name="orders",
+            base_view_name="orders_base",
+            sql_table_name="`my_proj.my_ds.orders`",
+            source_entry="//dataplex/entries/orders",
+            dimensions=[
+                LookMLDimension(
+                    name="order_id",
+                    type="string",
+                    sql="${TABLE}.order_id",
+                    hidden=False,
+                    label="Order ID",
+                )
+            ],
+        )
+
+        rendered_1 = self.generator.render_base_view(view)
+        rendered_2 = self.generator.render_base_view(view)
+
+        # Assert zero volatile timestamps in output
+        self.assertNotIn("Last Synced", rendered_1)
+        self.assertNotIn("timestamp", rendered_1.lower())
+        # Assert byte-for-byte idempotency across repeated runs
+        self.assertEqual(rendered_1, rendered_2)
+
 
 if __name__ == "__main__":
     unittest.main()
+

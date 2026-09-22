@@ -43,7 +43,31 @@ class TestGitProviderAndEnv(unittest.TestCase):
                         request={"name": "projects/test-proj/secrets/GITHUB_TOKEN/versions/latest"}
                     )
 
+    def test_token_redaction(self):
+        provider = GitHubProvider(repo_slug="org/repo", token="super_secret_pat_789")
+        raw_msg = "Error cloning https://x-access-token:super_secret_pat_789@github.com/org/repo"
+        redacted = provider._redact(raw_msg)
+        self.assertNotIn("super_secret_pat_789", redacted)
+        self.assertIn("[REDACTED_TOKEN]", redacted)
+
+    def test_secure_git_run_uses_env_auth(self):
+        provider = GitHubProvider(repo_slug="org/repo", token="super_secret_pat_789")
+        with patch("subprocess.run") as mock_run:
+            mock_res = MagicMock()
+            mock_res.returncode = 0
+            mock_run.return_value = mock_res
+
+            provider._run_git(["git", "status"])
+            mock_run.assert_called_once()
+            called_args, called_kwargs = mock_run.call_args
+            self.assertEqual(called_args[0], ["git", "status"])
+            # Verify credentials are in environment, not args
+            self.assertNotIn("super_secret_pat_789", str(called_args[0]))
+            called_env = called_kwargs["env"]
+            self.assertEqual(called_env["GIT_CONFIG_KEY_0"], "http.extraHeader")
+            self.assertIn("basic ", called_env["GIT_CONFIG_VALUE_0"])
 
 
 if __name__ == "__main__":
     unittest.main()
+

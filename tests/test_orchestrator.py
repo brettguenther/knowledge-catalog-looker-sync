@@ -1,0 +1,148 @@
+"""Unit tests for SyncOrchestrator, deployment invariants, and error isolation."""
+
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import yaml
+
+from looker_kc_sync.models.catalog import CatalogEntry, SchemaColumn
+from looker_kc_sync.orchestrator import SyncOrchestrator
+
+
+class TestSyncOrchestrator(unittest.TestCase):
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.out_dir = Path(self.temp_dir.name) / "output"
+        self.config_file = Path(self.temp_dir.name) / "sync_config.yaml"
+
+        cfg_content = {
+            "project_id": "test-project",
+            "location": "us-central1",
+            "dataset_id": "test_dataset",
+            "looker_project_id": "test_looker_project",
+            "connection_name": "test_conn",
+            "model_name": "test_model",
+            "active_profile": "config/profiles/semantic_curation.yaml",
+            "output_dir": str(self.out_dir),
+        }
+        self.config_file.write_text(yaml.dump(cfg_content))
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    @patch("looker_kc_sync.orchestrator.LookerClient")
+    @patch("looker_kc_sync.orchestrator.DataplexCatalogClient")
+    def test_deploy_only_base_views_invariant(self, mock_dpx_cls, mock_looker_cls):
+        """CRITICAL INVARIANT: Automated deployment must ONLY touch machine-managed base views."""
+        mock_dpx = MagicMock()
+        mock_dpx_cls.return_value = mock_dpx
+
+        mock_looker = MagicMock()
+        mock_looker.validate_project.return_value = (True, "Project is valid")
+        mock_looker_cls.return_value = mock_looker
+
+        entry = CatalogEntry(
+            resource_name="//dataplex/test/orders",
+            entry_id="orders",
+            display_name="orders",
+            bigquery_table="test-project.test_dataset.orders",
+            columns=[SchemaColumn(name="order_id", data_type="STRING")],
+        )
+        mock_dpx.get_dataset_entries.return_value = [entry]
+
+        orchestrator = SyncOrchestrator(str(self.config_file))
+        results = orchestrator.run(deploy=True, scaffold=False)
+
+        self.assertEqual(results["tables_processed"], 1)
+        self.assertTrue(results["looker_deployed"])
+
+        # Check deployed files
+        created_files = [call.kwargs.get("file_path") or call.args[1] for call in mock_looker.create_or_update_file.call_args_list]
+        for f in created_files:
+            self.assertTrue(f.startswith("views/base/"), f"Automated deploy wrote forbidden non-base file: {f}")
+            self.assertTrue(f.endswith(".base.view.lkml"))
+
+        # Verify curated views and model files were NOT deployed
+        self.assertNotIn("views/curated/orders.view.lkml", created_files)
+        self.assertNotIn("models/test_model.model.lkml", created_files)
+
+        # Verify curated views and model files were NOT written to disk when scaffold=False
+        self.assertFalse((self.out_dir / "views" / "curated" / "orders.view.lkml").exists())
+        self.assertFalse((self.out_dir / "models" / "test_model.model.lkml").exists())
+
+    @patch("looker_kc_sync.orchestrator.LookerClient")
+    @patch("looker_kc_sync.orchestrator.DataplexCatalogClient")
+    def test_scaffold_flag_generates_local_files_without_remote_deploy(self, mock_dpx_cls, mock_looker_cls):
+        mock_dpx = MagicMock()
+        mock_dpx_cls.return_value = mock_dpx
+
+        mock_looker = MagicMock()
+        mock_looker.validate_project.return_value = (True, "Project is valid")
+        mock_looker_cls.return_value = mock_looker
+
+        entry = CatalogEntry(
+            resource_name="//dataplex/test/orders",
+            entry_id="orders",
+            display_name="orders",
+            bigquery_table="test-project.test_dataset.orders",
+            columns=[SchemaColumn(name="order_id", data_type="STRING")],
+        )
+        mock_dpx.get_dataset_entries.return_value = [entry]
+
+        orchestrator = SyncOrchestrator(str(self.config_file))
+        results = orchestrator.run(deploy=False, scaffold=True)
+
+        # Verify local scaffold files exist
+        self.assertTrue((self.out_dir / "views" / "curated" / "orders.view.lkml").exists())
+        self.assertTrue((self.out_dir / "models" / f"{orchestrator.config.model_name}.model.lkml").exists())
+
+        # Verify remote deployment was NOT called
+        mock_looker.create_or_update_file.assert_not_called()
+
+    @patch("looker_kc_sync.orchestrator.DataplexCatalogClient")
+    def test_error_isolation_partial_failure(self, mock_dpx_cls):
+        """Verifies that a bad table entry does not crash the sync pipeline for valid entries."""
+        mock_dpx = MagicMock()
+        mock_dpx_cls.return_value = mock_dpx
+
+        valid_entry = CatalogEntry(
+            resource_name="//dataplex/test/valid",
+            entry_id="valid_table",
+            display_name="valid_table",
+            bigquery_table="test-project.test_dataset.valid_table",
+            columns=[SchemaColumn(name="id", data_type="STRING")],
+        )
+        broken_entry = CatalogEntry(
+            resource_name="//dataplex/test/broken",
+            entry_id="broken_table",
+            display_name="broken_table",
+            bigquery_table="test-project.test_dataset.broken_table",
+            columns=[],
+        )
+        mock_dpx.get_dataset_entries.return_value = [broken_entry, valid_entry]
+
+        orchestrator = SyncOrchestrator(str(self.config_file))
+        # Mock mapper to raise on broken_entry only
+        orig_map = orchestrator.mapper.map_entry_to_view
+
+        def side_effect(e):
+            if e.entry_id == "broken_table":
+                raise ValueError("Simulated malformed entry metadata")
+            return orig_map(e)
+
+        with patch.object(orchestrator.mapper, "map_entry_to_view", side_effect=side_effect):
+            results = orchestrator.run(deploy=False, scaffold=False)
+
+        # The valid table succeeded
+        self.assertEqual(results["tables_processed"], 1)
+        self.assertIn("valid_table", results["views_generated"])
+        # The broken table was recorded in errors without crashing the run
+        self.assertEqual(len(results["errors"]), 1)
+        self.assertIn("broken_table", results["errors"][0])
+
+
+if __name__ == "__main__":
+    unittest.main()

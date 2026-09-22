@@ -124,7 +124,7 @@ class SyncOrchestrator:
             self._looker_client = LookerClient()
         return self._looker_client
 
-    def run(self, deploy: bool = True, create_pr: bool = False) -> Dict[str, Any]:
+    def run(self, deploy: bool = True, create_pr: bool = False, scaffold: bool = False) -> Dict[str, Any]:
         """Executes full catalog extraction, LookML generation, Looker deployment, and optional PR creation."""
         results: Dict[str, Any] = {
             "tables_processed": 0,
@@ -134,6 +134,7 @@ class SyncOrchestrator:
             "validation_valid": False,
             "validation_message": "",
             "pr_result": None,
+            "errors": [],
         }
 
         # 1. Fetch entries from Knowledge Catalog
@@ -146,64 +147,73 @@ class SyncOrchestrator:
 
         out_path = Path(self.config.output_dir)
         base_views_dir = out_path / "views" / "base"
-        curated_views_dir = out_path / "views" / "curated"
-        models_dir = out_path / "models"
         base_views_dir.mkdir(parents=True, exist_ok=True)
-        curated_views_dir.mkdir(parents=True, exist_ok=True)
-        models_dir.mkdir(parents=True, exist_ok=True)
+        if scaffold:
+            curated_views_dir = out_path / "views" / "curated"
+            models_dir = out_path / "models"
+            curated_views_dir.mkdir(parents=True, exist_ok=True)
+            models_dir.mkdir(parents=True, exist_ok=True)
 
         views: List[LookMLView] = []
-        files_to_deploy: Dict[str, str] = {}
         base_view_files: Dict[str, str] = {}
 
-        # 2. Map & Generate Base Views
+        # 2. Map & Generate Base Views (Machine-managed layer with error isolation)
         for entry in entries:
-            view = self.mapper.map_entry_to_view(entry)
-            views.append(view)
-            results["tables_processed"] += 1
-            results["views_generated"].append(view.view_name)
+            try:
+                view = self.mapper.map_entry_to_view(entry)
+                views.append(view)
+                results["tables_processed"] += 1
+                results["views_generated"].append(view.view_name)
 
-            # Render Base View (Machine-managed layer)
-            base_lookml = self.generator.render_base_view(view)
-            base_file_rel = f"views/base/{view.view_name}.base.view.lkml"
-            base_file_local = out_path / base_file_rel
-            base_file_local.write_text(base_lookml)
-            results["files_written"].append(str(base_file_local))
-            files_to_deploy[base_file_rel] = base_lookml
-            base_view_files[base_file_rel] = base_lookml
+                # Render Base View (Machine-managed layer)
+                base_lookml = self.generator.render_base_view(view)
+                base_file_rel = f"views/base/{view.view_name}.base.view.lkml"
+                base_file_local = out_path / base_file_rel
+                base_file_local.write_text(base_lookml)
+                results["files_written"].append(str(base_file_local))
+                base_view_files[base_file_rel] = base_lookml
+            except Exception as e:
+                err_msg = f"Failed to map/generate view for table '{entry.entry_id}': {e}"
+                print(f"Warning: {err_msg}")
+                results["errors"].append(err_msg)
 
-            # Render Curated Extension View (Human refinement layer; scaffold if not present)
-            curated_file_rel = f"views/curated/{view.view_name}.view.lkml"
-            curated_file_local = out_path / curated_file_rel
-            if not curated_file_local.exists():
-                curated_lookml = self.generator.render_curated_refinement(view)
-                curated_file_local.write_text(curated_lookml)
-                results["files_written"].append(str(curated_file_local))
-                files_to_deploy[curated_file_rel] = curated_lookml
-            else:
-                files_to_deploy[curated_file_rel] = curated_file_local.read_text()
-
-        # 3. Render Model File (Scaffold if not present)
-        model_file_rel = f"models/{self.config.model_name}.model.lkml"
-        model_file_local = out_path / model_file_rel
-        if not model_file_local.exists():
-            model_lookml = self.generator.render_model(
-                model_name=self.config.model_name,
-                connection_name=self.config.connection_name,
-                views=views,
+        if not base_view_files:
+            raise RuntimeError(
+                f"All table mappings failed for dataset '{self.config.dataset_id}'. Errors: {results['errors']}"
             )
-            model_file_local.write_text(model_lookml)
-            results["files_written"].append(str(model_file_local))
-            files_to_deploy[model_file_rel] = model_lookml
-        else:
-            files_to_deploy[model_file_rel] = model_file_local.read_text()
+
+        # 3. Optional local scaffolding (Starter curated refinements and model file)
+        # Curated views (views/curated/) and models (models/) belong strictly to human analytics engineers.
+        # They are ONLY generated locally when explicit scaffolding is requested (scaffold=True)
+        # and MUST NEVER be deployed to remote Looker or submitted via automated PRs.
+        if scaffold:
+            for view in views:
+                curated_file_rel = f"views/curated/{view.view_name}.view.lkml"
+                curated_file_local = out_path / curated_file_rel
+                if not curated_file_local.exists():
+                    curated_lookml = self.generator.render_curated_refinement(view)
+                    curated_file_local.write_text(curated_lookml)
+                    results["files_written"].append(str(curated_file_local))
+
+            model_file_rel = f"models/{self.config.model_name}.model.lkml"
+            model_file_local = out_path / model_file_rel
+            if not model_file_local.exists():
+                model_lookml = self.generator.render_model(
+                    model_name=self.config.model_name,
+                    connection_name=self.config.connection_name,
+                    views=views,
+                )
+                model_file_local.write_text(model_lookml)
+                results["files_written"].append(str(model_file_local))
 
         # 4. Deploy to Looker via looker-cli
+        # Automated deployment strictly updates machine-managed base views (views/base/*.base.view.lkml).
+        # It MUST NOT deploy curated views or model files.
         if deploy:
             self.looker_client.ensure_dev_mode()
             self.looker_client.checkout_branch(self.config.looker_project_id, "master")
 
-            for rel_path, content in files_to_deploy.items():
+            for rel_path, content in base_view_files.items():
                 self.looker_client.create_or_update_file(
                     project_id=self.config.looker_project_id,
                     file_path=rel_path,

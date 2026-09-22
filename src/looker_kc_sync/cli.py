@@ -19,16 +19,21 @@ def main():
 
 @main.command()
 @click.option("--config", "-c", default="config/sync_config.yaml", help="Path to sync_config.yaml")
-@click.option("--deploy/--no-deploy", default=True, help="Deploy files to Looker project via looker-cli")
-@click.option("--pr", is_flag=True, default=False, help="Create a GitHub Pull Request with the LookML changes")
-def sync(config: str, deploy: bool, pr: bool):
-    """Synchronize Knowledge Catalog metadata to Looker LookML."""
-    console.print(Panel(f"[bold cyan]Starting Knowledge Catalog & Looker Synchronization[/bold cyan]\nConfig: {config}\nPR Mode: {pr}", border_style="cyan"))
+@click.option("--deploy/--no-deploy", default=True, help="Deploy machine-managed base views to Looker project via looker-cli")
+@click.option("--pr", is_flag=True, default=False, help="Create a GitHub Pull Request with the LookML base view changes")
+@click.option("--scaffold", is_flag=True, default=False, help="Generate starter curated refinements and model file locally if not present")
+def sync(config: str, deploy: bool, pr: bool, scaffold: bool):
+    """Synchronize Knowledge Catalog metadata to Looker LookML base views."""
+    console.print(Panel(
+        f"[bold cyan]Starting Knowledge Catalog & Looker Synchronization[/bold cyan]\n"
+        f"Config: {config}\nPR Mode: {pr}\nScaffold Local: {scaffold}",
+        border_style="cyan"
+    ))
 
     try:
         orchestrator = SyncOrchestrator(config)
         with console.status("[bold green]Extracting metadata, generating LookML, and processing...[/bold green]"):
-            results = orchestrator.run(deploy=deploy, create_pr=pr)
+            results = orchestrator.run(deploy=deploy, create_pr=pr, scaffold=scaffold)
 
         table = Table(title="Sync Execution Summary", border_style="green")
         table.add_column("Metric / Stage", style="bold white")
@@ -37,7 +42,7 @@ def sync(config: str, deploy: bool, pr: bool):
         table.add_row("Tables Processed", str(results["tables_processed"]))
         table.add_row("Views Generated", ", ".join(results["views_generated"]))
         table.add_row("Local Files Written", str(len(results["files_written"])))
-        table.add_row("Looker Deployed", "Yes" if results["looker_deployed"] else "No (skipped)")
+        table.add_row("Looker Deployed (Base Views)", "Yes" if results["looker_deployed"] else "No (skipped)")
 
         if results["looker_deployed"]:
             val_status = "[bold green]PASS[/bold green]" if results["validation_valid"] else "[bold red]FAIL[/bold red]"
@@ -53,10 +58,28 @@ def sync(config: str, deploy: bool, pr: bool):
             else:
                 table.add_row("GitHub PR", pr_res.get("message", "No PR created"))
 
+        if results.get("errors"):
+            table.add_row("Skipped Tables / Errors", "\n".join(results["errors"]), style="yellow")
+
         console.print(table)
 
     except Exception as e:
         console.print(f"[bold red]Sync Failed:[/bold red] {e}")
+        raise click.Abort()
+
+
+@main.command()
+@click.option("--config", "-c", default="config/sync_config.yaml", help="Path to sync_config.yaml")
+def scaffold(config: str):
+    """Scaffold initial local curated refinements and model file without remote deployment."""
+    console.print(Panel(f"[bold cyan]Scaffolding Curated Views & Model[/bold cyan]\nConfig: {config}", border_style="cyan"))
+    try:
+        orchestrator = SyncOrchestrator(config)
+        with console.status("[bold green]Extracting metadata and scaffolding starter files...[/bold green]"):
+            results = orchestrator.run(deploy=False, create_pr=False, scaffold=True)
+        console.print(f"[bold green]✓ Scaffolding complete! Local files written: {len(results['files_written'])}[/bold green]")
+    except Exception as e:
+        console.print(f"[bold red]Scaffolding Failed:[/bold red] {e}")
         raise click.Abort()
 
 

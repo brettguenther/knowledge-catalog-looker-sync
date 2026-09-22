@@ -1,8 +1,8 @@
-# Knowledge Catalog to Looker LookML Synchronization Engine
+# Knowledge Catalog to LookML (Looker) Synchronization Engine
 
-The Knowledge Catalog to Looker LookML Synchronization Engine automates the ingestion of data governance, semantic curation, and business glossary metadata from Google Cloud Knowledge Catalog (Dataplex) into production-ready LookML views and models.
+The Knowledge Catalog to LookML (Looker) Synchronization Engine automates the ingestion of data governance, semantic curation, and business glossary metadata from Google Cloud Knowledge Catalog (Dataplex) into production-ready LookML views and models.
 
-The system is optimized to provide rich metadata for Looker Conversational Analytics (CA) agents, mapping catalog aspects directly into LookML parameters (e.g. `label`, `description`, `synonyms`, `suggestions`).
+The system is optimized to provide rich metadata for Looker semantic models, mapping catalog aspects directly into LookML parameters (e.g. `label`, `description`, `synonyms`, `suggestions`).
 
 ## Architecture
 
@@ -118,7 +118,6 @@ cp .env.example .env
 
 `config/sync_config.yaml` supports environment variable expansion (`${VAR:-default}`):
 
-
 ```yaml
 project_id: "${PROJECT_ID:-<PROJECT_ID>}"
 location: "${LOCATION:-us-central1}"
@@ -204,7 +203,7 @@ gcloud run jobs create kc-looker-sync-job \
 
 ### 3. Schedule with Cloud Scheduler
 
-Trigger periodic synchronization (e.g., every 6 hours or post-ETL ingestion) by creating a Cloud Scheduler job targeting the Cloud Run Job API:
+Trigger periodic synchronization (e.g., every 6 hours) by creating a Cloud Scheduler job targeting the Cloud Run Job API:
 
 ```bash
 gcloud scheduler jobs create http kc-looker-sync-trigger \

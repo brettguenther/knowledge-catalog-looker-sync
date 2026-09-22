@@ -10,7 +10,7 @@ The synchronization engine uses a profile-driven declarative architecture (`conf
 
 Organizations maintain catalog metadata across varied schemas:
 - Custom Dataplex aspect types (e.g. `semantic-curation`).
-- Third-party catalog ingestion feeds (e.g. Collibra, Alation, Apache Atlas synced to Dataplex).
+- Third-party catalog ingestion feeds (e.g. Collibra synced to Dataplex).
 - Native Dataplex stewardship, policy tags, and BigQuery schema annotations.
 
 Rather than hardcoding transformation logic for each catalog schema, mapping profiles decouple source metadata structures from LookML generation. A profile defines how to identify certified entities, which columns to exclude, how to resolve LookML parameters through fallback cascades, and how to format data types for Looker Conversational Analytics.
