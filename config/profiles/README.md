@@ -29,3 +29,23 @@ explore_policy:
 - **`strategy: "patterns"`**: Matches table names against glob expressions (e.g. `fct_*`, `fact_*`, `orders`).
 - **`strategy: "root_only"`**: Inspects join graph topology to identify root entities with outgoing joins, suppressing pure join target tables.
 - **`exclude_dimension_tables: true`**: Automatically suppresses standalone explores for dimension tables (prefixed with `dim_`, tagged with `dimension`/`dim`/`lookup`, or acting as join targets with no outgoing joins), while keeping them available as joined views.
+
+## AI Data Documentation (`use_ai_data_documentation`)
+
+Profiles enable `use_ai_data_documentation: true` by default to leverage Gemini-generated table overviews and column descriptions from Dataplex `DATA_DOCUMENTATION` scans:
+
+```yaml
+use_ai_data_documentation: true
+
+field_mappings:
+  description:
+    sources:
+      - path: "semantic-curation.business_description" # 1. Human-curated governance (Highest priority)
+      - path: "column.description"                     # 2. Native BigQuery column description
+      - path: "data-documentation.description"         # 3. Gemini AI Data Documentation fallback
+```
+
+- Ingests both native catalog-published `descriptions` aspects attached directly to Dataplex entries and live DataScan service results.
+- Backfills missing descriptions on certified visible fields without overriding human-curated stewardship.
+- Table overviews backfill to `view.description` and `explore.description` when manual business descriptions are omitted.
+

@@ -8,8 +8,8 @@ The system is optimized to provide rich metadata for Looker semantic models, map
 
 ```mermaid
 flowchart TD
-    KC["Google Cloud Knowledge Catalog<br/>(Dataplex v2)"] -->|"Extract Entries & Aspects"| Extractor["Dataplex Catalog Client"]
-    Extractor -->|"Raw CatalogEntry & Aspects"| Mapper["Declarative Semantic Mapper<br/>(config/profiles/*.yaml)"]
+    KC["Google Cloud Knowledge Catalog<br/>(Dataplex v2)"] -->|"Extract Entries, Aspects &<br/>AI Data Documentation"| Extractor["Dataplex Catalog Client"]
+    Extractor -->|"Raw CatalogEntry, Aspects & Scans"| Mapper["Declarative Semantic Mapper<br/>(config/profiles/*.yaml)"]
     Mapper -->|"Normalized LookML AST Model"| Generator["Jinja2 + lkml Serializer"]
     Generator -->|"Base Layer (/views/base/*.lkml & /explores/base/*.lkml)"| Validator["lkml Local AST Validator"]
 
@@ -24,6 +24,10 @@ flowchart TD
 ## Key Features
 
 - **Declarative Mapping Engine**: Profile-driven architecture (`config/profiles/*.yaml`) decoupling source catalog taxonomy from LookML generation. Supports Dataplex custom aspects, Collibra outbound sync schemas, and native Dataplex metadata. See [docs/PROFILES.md](docs/PROFILES.md) for complete schema and configuration guide.
+- **Knowledge Catalog AI Data Documentation (Gemini Descriptions)**:
+  - Automatically ingests Gemini-powered Dataplex `DATA_DOCUMENTATION` scan outputs, including dataset/table overviews and column-level descriptions.
+  - Dual extraction support: captures both native catalog-published aspect payloads (`descriptions`) attached directly to Dataplex entries and live `DataScanServiceClient` scan results.
+  - Governed fallback cascade: when certified fields or tables lack manual business descriptions in `semantic-curation` or BigQuery schema annotations, the engine automatically populates LookML `description` attributes from AI documentation (`use_ai_data_documentation: true`), ensuring complete conversational context without overriding human stewardship.
 - **Explore Scoping & Governance Controls (`explore_policy`)**:
   - Declaratively scopes LookML explore generation to designated business/fact entities using selection strategies (`tagged`, `allowlist`, `patterns`, `root_only`, `all`), preventing Looker explore bloat.
   - Automatically identifies and excludes dimension tables (`dim_*` prefixes, `dimension` tags, or leaf join targets) from standalone explores while preserving them as base views for star-schema joins.
@@ -36,9 +40,10 @@ flowchart TD
 - **Two-Layer Refinement Architecture**:
   - `views/base/*.base.view.lkml` & `explores/base/*.base.explore.lkml`: Fully machine-generated base views and base explores (with star-schema `join:` relationships from `LookupContext` / `DATA_DOCUMENTATION` and partition/cluster filter rules) synced directly from Knowledge Catalog.
   - `views/curated/*.view.lkml`: Human-authored LookML refinements (`view: +table`), preserving custom measures, drill paths, and composite calculations across automated syncs without modifying base files or duplicating namespaces.
-- **AI Data Insights & Partition/Cluster Optimization**:
-  - Automatically ingests Dataplex `DATA_DOCUMENTATION` scan overviews and column descriptions as natural-language fallbacks (`use_ai_data_documentation: true`).
-  - Optionally synthesizes dedicated LookML `filter:` fields for BigQuery partition and cluster keys (`auto_generate_partition_cluster_filters`) and explore-level `always_filter` guardrails (`always_filter_on_partition_key`).
+- **BigQuery Partition & Cluster Optimization**:
+  - Automatically detects BigQuery table partitioning and clustering keys from Dataplex catalog metadata.
+  - Synthesizes dedicated LookML `filter:` fields (`auto_generate_partition_cluster_filters`) and tags dimensions with `partition_key` / `cluster_key`.
+  - Optionally enforces explore-level partition filters (`always_filter_on_partition_key`) with configurable defaults (e.g. `"30 days"`).
 - **Native Tooling & Deduplicated GitOps CI/CD**:
   - Validates generated LookML syntax locally with `lkml` prior to remote staging.
   - Development Mode: Uses `looker-cli` directly for authenticated directory creation, dev-branch checkout, file deployment, and project validation (`validate_project`).
@@ -170,6 +175,52 @@ uv run looker-kc-sync validate --project <LOOKER_PROJECT_ID>
 
 ```bash
 uv run python -m unittest discover tests
+```
+
+## Knowledge Catalog AI Data Documentation
+
+Google Cloud Knowledge Catalog features built-in AI Data Documentation scans powered by Gemini. When triggered, Dataplex analyzes the underlying BigQuery table data, distributions, and query patterns to generate:
+- Comprehensive natural language **table overviews**.
+- Column-level **semantic descriptions** explaining business context, units, and usage.
+
+### 1. Dual Ingestion Pathways
+
+The synchronization engine supports two complementary pathways to ingest AI documentation:
+
+1. **Catalog-Published Aspects (`descriptions`)**:
+   When datascans are configured with `--enable-catalog-publishing`, Dataplex publishes the documentation as a native `descriptions` aspect directly on the catalog entry. The sync engine automatically unpacks this aspect from `entry.aspects`, allowing serverless execution (e.g. Cloud Run) without requiring elevated DataScan read permissions.
+2. **Live DataScan Service Enrichment**:
+   The engine's `DataplexCatalogClient` inspects active `DATA_DOCUMENTATION` scans within the dataset via `DataScanServiceClient` to enrich catalog entries dynamically.
+
+### 2. Governed Description Cascades
+
+AI Data Documentation is designed as a governed backfill that respects human curation:
+
+```yaml
+use_ai_data_documentation: true
+
+field_mappings:
+  description:
+    sources:
+      - path: "semantic-curation.business_description" # 1. Human-curated governance (Highest priority)
+      - path: "column.description"                     # 2. Native BigQuery column description
+      - path: "data-documentation.description"         # 3. Gemini AI Data Documentation fallback
+```
+
+- **Table Overviews**: If `business_description` is omitted on a table, the engine falls back to `data-documentation.overview` for the LookML view description and explore description.
+- **Field Descriptions**: Certified dimensions lacking a manual business description automatically backfill from `data-documentation.description`.
+- **Governed Base Layer Invariant**: Uncertified columns (`is_certified: false`) remain `hidden: yes` and unannotated, ensuring AI descriptions only expose certified data assets.
+
+```lookml
+# Example: Certified field with no manual business description backfilled by AI
+dimension: shipping_amount {
+  type: number
+  sql: ${TABLE}.shipping_amount ;;
+  label: "Shipping Amount"
+  description: "This column stores the monetary cost associated with shipping the order."
+  tags: ["certified", "shipping"]
+  value_format_name: usd
+}
 ```
 
 ## Cloud Deployment (Cloud Run & Cloud Scheduler)
