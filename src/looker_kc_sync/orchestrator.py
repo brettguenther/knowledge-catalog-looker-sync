@@ -234,7 +234,7 @@ class SyncOrchestrator:
                 model_file_local.write_text(model_lookml)
                 results["files_written"].append(str(model_file_local))
 
-        # 4. Deploy to Looker via looker-cli
+        # 4. Deploy to Looker via LookerClient (SDK/CLI)
         # Automated deployment strictly updates machine-managed base views and base explores.
         # It MUST NOT deploy curated views or model files.
         if deploy:

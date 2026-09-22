@@ -10,15 +10,15 @@ The system is optimized to provide rich metadata for Looker semantic models, map
 flowchart TD
     KC["Google Cloud Knowledge Catalog<br/>(Dataplex v2)"] -->|"Extract Entries, Aspects &<br/>AI Data Documentation"| Extractor["Dataplex Catalog Client"]
     Extractor -->|"Raw CatalogEntry, Aspects & Scans"| Mapper["Declarative Semantic Mapper<br/>(config/profiles/*.yaml)"]
-    Mapper -->|"Normalized LookML AST Model"| Generator["Jinja2 + lkml Serializer"]
+    Mapper -->|"Normalized LookML AST Model"| Generator["LookML AST Serializer<br/>(lkml)"]
     Generator -->|"Base Layer (/views/base/*.lkml & /explores/base/*.lkml)"| Validator["lkml Local AST Validator"]
 
-    Validator -->|"Dev Mode (--deploy)"| LookerCLI["looker-cli Automation"]
-    LookerCLI -->|"Workspace Validation"| LookerDev["Looker Dev Workspace"]
+    Validator -->|"Dev Mode (--deploy)"| LookerClient["Looker SDK / API Client<br/>(Optional CLI Fallback)"]
+    LookerClient -->|"Dev Workspace Validation"| LookerDev["Looker Dev Workspace"]
 
-    Validator -->|"GitOps Sync (--pr)"| GitClient["GitHub PR Provider"]
+    Validator -->|"GitOps Sync (--pr)"| GitClient["GitHub PR Provider<br/>(Secret Manager + REST API)"]
     GitClient -->|"Automated Pull Request"| GitHub["LookML Repository<br/>(Target Git Repo)"]
-    GitHub -->|"CI Validation & Review Merge"| LookerProd["Looker Production Explores &<br/>Conversational Analytics Agents"]
+    GitHub -->|"Looker CI Suite & Review Merge"| LookerProd["Looker Production Explores &<br/>Conversational Analytics Agents"]
 ```
 
 ## Key Features
@@ -42,12 +42,15 @@ flowchart TD
   - `views/curated/*.view.lkml`: Human-authored LookML refinements (`view: +table`), preserving custom measures, drill paths, and composite calculations across automated syncs without modifying base files or duplicating namespaces.
 - **BigQuery Partition & Cluster Optimization**:
   - Automatically detects BigQuery table partitioning and clustering keys from Dataplex catalog metadata.
-  - Synthesizes dedicated LookML `filter:` fields (`auto_generate_partition_cluster_filters`) and tags dimensions with `partition_key` / `cluster_key`.
-  - Optionally enforces explore-level partition filters (`always_filter_on_partition_key`) with configurable defaults (e.g. `"30 days"`).
+  - Synthesizes dedicated LookML `filter:` fields (`auto_generate_partition_cluster_filters`) with condition Liquid tags:
+    `sql: {% condition <col>_filter %} ${<col>_raw} {% endcondition %} ;;`
+  - Targets un-truncated raw timeframes (`${<col>_raw}`) or explicit field type references (`${<col>::date}`) to prevent Looker from casting timeframes to strings, guaranteeing direct database partition pruning on BigQuery without type mismatch.
+  - Automatically omits `suggest_dimension` on date/numeric filters (restricting suggestions strictly to categorical string filters).
+  - Tags dimensions with `partition_key` / `cluster_key` and optionally enforces explore-level partition filters (`always_filter_on_partition_key`) with configurable defaults (e.g. `"30 days"`).
 - **Native Tooling & Deduplicated GitOps CI/CD**:
   - Validates generated LookML syntax locally with `lkml` prior to remote staging.
-  - Development Mode: Uses `looker-cli` directly for authenticated directory creation, dev-branch checkout, file deployment, and project validation (`validate_project`).
-  - Production GitOps: Sync bot reuses existing open `kc-sync/*` Pull Requests (`PATCH` + force-push) or opens a new Pull Request scoped strictly to machine-managed base views and base explores.
+  - Development Mode (`--deploy`): Uses the official Looker SDK (Looker 4.0 API, with `looker-cli` as local fallback) for authenticated dev-workspace checkout, directory creation, file deployment, and project validation (`validate_project`).
+  - Production GitOps (`--pr`): Sync bot runs headlessly (via GitHub REST API with Secret Manager tokens) to create or update existing `kc-sync/*` Pull Requests (`PATCH` + force-push) scoped strictly to machine-managed base views and base explores without requiring Looker instance credentials during sync.
   - Automated Looker CI: Downstream LookML repositories are expected to run [Looker CI Suites](https://docs.cloud.google.com/looker/docs/ci-create-suite) on PR updates as an additional validation gate before merging to production.
 
 ## Repository Structure
@@ -79,10 +82,11 @@ looker-kc/
 │   └── looker_kc_sync/
 │       ├── cli.py                     # CLI entrypoint (sync, scaffold, validate)
 │       ├── orchestrator.py            # End-to-end sync coordinator & env resolution
+│       ├── protocols.py               # Structural Protocol definitions for sources & sinks
 │       ├── clients/
 │       │   ├── dataplex.py            # Dataplex Catalog & DataScan API client
 │       │   ├── git_provider.py        # Deduplicated GitHub PR provider & Secret Manager client
-│       │   └── looker.py              # Looker SDK & looker-cli wrapper (dev mode)
+│       │   └── looker.py              # Looker SDK (Looker 4.0 API) & looker-cli fallback wrapper
 │       ├── generator/
 │       │   └── engine.py              # lkml AST serialization & validation (views, explores, models)
 │       ├── mapping/
@@ -106,8 +110,10 @@ looker-kc/
 ### 1. Requirements & Installation
 
 - Python >= 3.11
-- Google Cloud SDK (`gcloud`) authenticated to target GCP project
-- `looker-cli` installed and configured with instance credentials (for local dev mode deployment)
+- Google Cloud SDK (`gcloud`) authenticated to target GCP project (with permissions for Dataplex and Secret Manager)
+- Authentication credentials based on execution mode:
+  - **GitOps Pull Request Mode (`--pr`, Default for Serverless / Cloud Run)**: GitHub Personal Access Token with repo/PR permissions (stored in Secret Manager or set as `GITHUB_TOKEN`). Looker instance credentials are not required during synchronization.
+  - **Direct Looker Dev Mode (`--deploy`)**: Looker API credentials (`LOOKERSDK_BASE_URL`, `LOOKERSDK_CLIENT_ID`, `LOOKERSDK_CLIENT_SECRET` via environment variables or `looker.ini`), or `looker-cli` configured with instance credentials.
 
 Install project dependencies using `uv` (recommended) or `pip`:
 
@@ -167,6 +173,8 @@ uv run looker-kc-sync sync --config config/sync_config.yaml --explore-table orde
 ```
 
 ### 4. Validate Project in Looker
+
+Run server-side LookML project validation against the Looker dev workspace via the Looker SDK API (or local `looker-cli` fallback):
 
 ```bash
 uv run looker-kc-sync validate --project <LOOKER_PROJECT_ID>

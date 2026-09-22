@@ -19,7 +19,7 @@ def main():
 
 @main.command()
 @click.option("--config", "-c", default="config/sync_config.yaml", help="Path to sync_config.yaml")
-@click.option("--deploy/--no-deploy", default=True, help="Deploy machine-managed base views and base explores to Looker project via looker-cli")
+@click.option("--deploy/--no-deploy", default=True, help="Deploy machine-managed base views and base explores to Looker project via Looker SDK (or looker-cli fallback)")
 @click.option("--pr", is_flag=True, default=False, help="Create or update a GitHub Pull Request with the LookML base view and base explore changes")
 @click.option("--scaffold", is_flag=True, default=False, help="Generate starter curated refinements and model file locally if not present")
 @click.option("--explore-table", "-e", "explore_tables", multiple=True, help="Optional table(s) to scope base explore generation")
@@ -93,7 +93,7 @@ def scaffold(config: str):
 @main.command()
 @click.option("--project", "-p", default=lambda: os.environ.get("LOOKER_PROJECT_ID", ""), help="Looker project ID (defaults to LOOKER_PROJECT_ID env var)")
 def validate(project: str):
-    """Run LookML validation against a Looker project using looker-cli."""
+    """Run LookML validation against a Looker project using Looker SDK (or looker-cli fallback)."""
     if not project:
         console.print("[bold red]Error:[/bold red] Please provide --project or set LOOKER_PROJECT_ID environment variable.")
         raise click.Abort()
