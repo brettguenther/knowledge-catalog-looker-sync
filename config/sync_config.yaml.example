@@ -8,3 +8,6 @@ connection_name: "${CONNECTION_NAME:-<LOOKER_CONNECTION_NAME>}"
 model_name: "${MODEL_NAME:-retail}"
 active_profile: "config/profiles/semantic_curation.yaml"
 output_dir: "${OUTPUT_DIR:-output}"
+# Optional table allowlist override for LookML explore generation
+# explore_tables:
+#   - "orders"

@@ -11,7 +11,7 @@ flowchart TD
     KC["Google Cloud Knowledge Catalog<br/>(Dataplex v2)"] -->|"Extract Entries & Aspects"| Extractor["Dataplex Catalog Client"]
     Extractor -->|"Raw CatalogEntry & Aspects"| Mapper["Declarative Semantic Mapper<br/>(config/profiles/*.yaml)"]
     Mapper -->|"Normalized LookML AST Model"| Generator["Jinja2 + lkml Serializer"]
-    Generator -->|"Base Views (/views/base/*.base.view.lkml)"| Validator["lkml Local AST Validator"]
+    Generator -->|"Base Layer (/views/base/*.lkml & /explores/base/*.lkml)"| Validator["lkml Local AST Validator"]
 
     Validator -->|"Dev Mode (--deploy)"| LookerCLI["looker-cli Automation"]
     LookerCLI -->|"Workspace Validation"| LookerDev["Looker Dev Workspace"]
@@ -24,11 +24,14 @@ flowchart TD
 ## Key Features
 
 - **Declarative Mapping Engine**: Profile-driven architecture (`config/profiles/*.yaml`) decoupling source catalog taxonomy from LookML generation. Supports Dataplex custom aspects, Collibra outbound sync schemas, and native Dataplex metadata. See [docs/PROFILES.md](docs/PROFILES.md) for complete schema and configuration guide.
+- **Explore Scoping & Governance Controls (`explore_policy`)**:
+  - Declaratively scopes LookML explore generation to designated business/fact entities using selection strategies (`tagged`, `allowlist`, `patterns`, `root_only`, `all`), preventing Looker explore bloat.
+  - Automatically identifies and excludes dimension tables (`dim_*` prefixes, `dimension` tags, or leaf join targets) from standalone explores while preserving them as base views for star-schema joins.
+  - Supports CLI (`--explore-table`) and configuration (`explore_tables`) allowlist overrides.
 - **Conversational Analytics Enablement**:
-  - Automatically sets `fields_hidden_by_default: yes` at the view level to avoid field bloat.
-  - Selectively unhides only certified fields (`hidden: no`) satisfying governance rules.
+  - Idiomatic LookML visibility: certified fields are exposed by default, while uncertified fields declare `hidden: yes` to avoid field bloat.
   - Populates natural language `label`, `description`, and `synonyms` for conversational grounding.
-  - Generates discrete categorical `suggestions` from allowed value lists, eliminating runtime sampling queries.
+  - Generates discrete categorical `suggestions` when unique values are `< 10` (or tagged as exhaustive/closed lists), eliminating runtime sampling queries.
   - Formats metrics with native `value_format_name` mappings (e.g. `usd`, `percent_2`).
 - **Two-Layer Refinement Architecture**:
   - `views/base/*.base.view.lkml` & `explores/base/*.base.explore.lkml`: Fully machine-generated base views and base explores (with star-schema `join:` relationships from `LookupContext` / `DATA_DOCUMENTATION` and partition/cluster filter rules) synced directly from Knowledge Catalog.
@@ -136,6 +139,9 @@ connection_name: "${CONNECTION_NAME:-<LOOKER_CONNECTION_NAME>}"
 model_name: "${MODEL_NAME:-retail}"
 active_profile: "config/profiles/semantic_curation.yaml"
 output_dir: "${OUTPUT_DIR:-output}"
+# Optional table allowlist override for LookML explore generation
+# explore_tables:
+#   - "orders"
 ```
 
 ### 3. Run Synchronization
@@ -149,6 +155,9 @@ uv run looker-kc-sync sync --config config/sync_config.yaml --no-deploy
 
 # Run with automated GitOps Pull Request creation
 uv run looker-kc-sync sync --config config/sync_config.yaml --no-deploy --pr
+
+# Scope base explore generation to specific tables (overriding profile explore_policy)
+uv run looker-kc-sync sync --config config/sync_config.yaml --explore-table orders --pr
 ```
 
 ### 4. Validate Project in Looker
