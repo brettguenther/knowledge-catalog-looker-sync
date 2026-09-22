@@ -5,6 +5,14 @@ use_dimension_groups: true
 fields_hidden_by_default: false
 max_suggestions_limit: 10
 
+explore_policy:
+  enabled: true
+  strategy: "tagged"
+  required_tags: ["core_bi", "explore", "fact"]
+  table_allowlist: []
+  table_patterns: ["fct_*", "fact_*", "orders"]
+  exclude_dimension_tables: true
+
 certification_rule:
   path: "collibra_governance.status"
   operator: "in"

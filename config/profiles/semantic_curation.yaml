@@ -6,6 +6,14 @@ use_ai_data_documentation: true
 auto_generate_partition_cluster_filters: false
 always_filter_on_partition_key: false
 
+explore_policy:
+  enabled: true
+  strategy: "tagged"
+  required_tags: ["core_bi", "explore", "fact"]
+  table_allowlist: []
+  table_patterns: ["fct_*", "fact_*", "orders"]
+  exclude_dimension_tables: true
+
 certification_rule:
   path: "semantic-curation.status"
   operator: "equals"

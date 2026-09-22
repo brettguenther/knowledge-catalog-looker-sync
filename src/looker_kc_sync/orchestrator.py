@@ -58,6 +58,7 @@ class SyncConfig(BaseSettings):
     active_profile: str
     output_dir: str = "output"
     tables: Optional[List[str]] = None
+    explore_tables: Optional[List[str]] = None
 
 
 def load_sync_config(config_path: str, **overrides: Any) -> SyncConfig:
@@ -90,9 +91,10 @@ class SyncOrchestrator:
         catalog_client: Optional[CatalogSource] = None,
         looker_client: Optional[LookMLDeployer] = None,
         generator: Optional[LookMLGenerator] = None,
+        **config_overrides: Any,
     ):
         self.config_path = Path(config_path)
-        self.config = load_sync_config(config_path)
+        self.config = load_sync_config(config_path, **config_overrides)
 
         # Load mapping profile
         profile_path = Path(self.config.active_profile)
@@ -103,6 +105,11 @@ class SyncOrchestrator:
         with open(profile_path, "r") as f:
             raw_profile = yaml.safe_load(f)
         self.profile = MappingProfile(**raw_profile)
+
+        # If explore_tables is explicitly configured, override explore_policy to allowlist
+        if self.config.explore_tables is not None:
+            self.profile.explore_policy.strategy = "allowlist"
+            self.profile.explore_policy.table_allowlist = list(self.config.explore_tables)
 
         # Injected or default dependencies adhering to protocols
         self.catalog_client: CatalogSource = catalog_client or DataplexCatalogClient(
@@ -184,8 +191,11 @@ class SyncOrchestrator:
             )
 
         # 2b. Map & Generate Base Explores (.base.explore.lkml) with Join & Partition Context
+        all_catalog_entries = [e for e, _ in entry_view_pairs]
         views_by_name = {v.view_name: v for v in views}
         for entry, view in entry_view_pairs:
+            if not self.mapper.should_generate_explore(entry, all_entries=all_catalog_entries):
+                continue
             try:
                 explore = self.mapper.map_entry_to_explore(entry, view, views_by_name=views_by_name)
                 explore_lookml = self.generator.render_base_explore(explore)

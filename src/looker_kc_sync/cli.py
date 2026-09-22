@@ -22,7 +22,8 @@ def main():
 @click.option("--deploy/--no-deploy", default=True, help="Deploy machine-managed base views and base explores to Looker project via looker-cli")
 @click.option("--pr", is_flag=True, default=False, help="Create or update a GitHub Pull Request with the LookML base view and base explore changes")
 @click.option("--scaffold", is_flag=True, default=False, help="Generate starter curated refinements and model file locally if not present")
-def sync(config: str, deploy: bool, pr: bool, scaffold: bool):
+@click.option("--explore-table", "-e", "explore_tables", multiple=True, help="Optional table(s) to scope base explore generation")
+def sync(config: str, deploy: bool, pr: bool, scaffold: bool, explore_tables: tuple[str, ...]):
     """Synchronize Knowledge Catalog metadata to Looker LookML base views and base explores."""
     console.print(Panel(
         f"[bold cyan]Starting Knowledge Catalog & Looker Synchronization[/bold cyan]\n"
@@ -31,7 +32,10 @@ def sync(config: str, deploy: bool, pr: bool, scaffold: bool):
     ))
 
     try:
-        orchestrator = SyncOrchestrator(config)
+        overrides = {}
+        if explore_tables:
+            overrides["explore_tables"] = list(explore_tables)
+        orchestrator = SyncOrchestrator(config, **overrides)
         with console.status("[bold green]Extracting metadata, generating LookML, and processing...[/bold green]"):
             results = orchestrator.run(deploy=deploy, create_pr=pr, scaffold=scaffold)
 

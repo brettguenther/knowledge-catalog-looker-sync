@@ -1,5 +1,6 @@
 """Semantic Mapping Engine: Maps Catalog Entries to Normalized LookML Views and Base Explores."""
 
+import fnmatch
 from typing import Any, Dict, List, Optional, Set, Tuple
 from looker_kc_sync.mapping.profile import AttributeMapping, MappingProfile, TagMapping
 from looker_kc_sync.mapping.rules import (
@@ -101,6 +102,17 @@ class SemanticMapper:
                 table_desc = str(doc_aspect["overview"]).strip()
 
         return table_desc, sorted(list(set(table_tags)))
+
+    def _resolve_table_tags(self, entry: CatalogEntry) -> List[str]:
+        """Resolves all governance tags and labels attached to a catalog entry."""
+        _, tags = self._resolve_table_metadata(entry)
+        for k, v in entry.table_aspects.items():
+            if isinstance(v, dict):
+                for tag_field in ("tags", "labels"):
+                    val = v.get(tag_field)
+                    if isinstance(val, list):
+                        tags.extend(val)
+        return sorted(list(set(tags)))
 
     def _resolve_column_metadata(
         self,
@@ -458,3 +470,84 @@ class SemanticMapper:
             always_filter=always_filter,
             source_entry=entry.resource_name,
         )
+
+    def should_generate_explore(
+        self,
+        entry: CatalogEntry,
+        all_entries: Optional[List[CatalogEntry]] = None,
+    ) -> bool:
+        """Evaluates ExplorePolicy to determine whether to generate a base explore for entry."""
+        policy = self.profile.explore_policy
+        if not policy.enabled:
+            return False
+
+        table_name = entry.entry_id.lower()
+        display_name = (entry.display_name or "").lower()
+        view_name = table_name.replace("-", "_")
+        entry_names = {table_name, display_name, view_name}
+
+        # 1. Allowlist override: explicit tables always qualify
+        allowlist_set = {t.lower() for t in policy.table_allowlist}
+        if allowlist_set and (entry_names & allowlist_set):
+            return True
+
+        # 2. Exclude dimension tables heuristic
+        if policy.exclude_dimension_tables:
+            if (
+                table_name.startswith("dim_")
+                or display_name.startswith("dim_")
+                or table_name.startswith("dimension_")
+                or table_name.endswith("_dim")
+            ):
+                return False
+
+            table_tags = {t.lower() for t in self._resolve_table_tags(entry)}
+            if any(dt in table_tags for dt in ["dimension", "dim", "lookup"]):
+                return False
+
+            if all_entries and len(entry.joins) == 0:
+                all_target_tables = {
+                    rel.target_table.lower().replace("-", "_")
+                    for e in all_entries
+                    for rel in e.joins
+                }
+                if view_name in all_target_tables or table_name in all_target_tables:
+                    return False
+
+        # 3. Strategy evaluation
+        strategy = policy.strategy.lower()
+
+        if strategy == "all":
+            return True
+
+        if strategy == "allowlist":
+            # Handled in step 1; if not matched, then False
+            return False
+
+        if strategy == "tagged":
+            table_tags = {t.lower() for t in self._resolve_table_tags(entry)}
+            req_tags = {t.lower() for t in policy.required_tags}
+            return bool(table_tags & req_tags)
+
+        if strategy == "patterns":
+            for pat in policy.table_patterns:
+                pat_l = pat.lower()
+                if any(fnmatch.fnmatch(name, pat_l) for name in entry_names):
+                    return True
+            return False
+
+        if strategy == "root_only":
+            if len(entry.joins) > 0:
+                return True
+            if all_entries:
+                all_target_tables = {
+                    rel.target_table.lower().replace("-", "_")
+                    for e in all_entries
+                    for rel in e.joins
+                }
+                if view_name in all_target_tables or table_name in all_target_tables:
+                    return False
+            return True
+
+        return True
+

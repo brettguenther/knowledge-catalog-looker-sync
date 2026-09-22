@@ -54,10 +54,25 @@ class FieldMappings(BaseModel):
     value_format_name: Optional[AttributeMapping] = None
 
 
+class ExplorePolicy(BaseModel):
+    """Policy governing which catalog entities generate LookML base explores."""
+    enabled: bool = True
+    strategy: str = "tagged"  # "tagged", "allowlist", "patterns", "root_only", "all"
+    required_tags: List[str] = Field(
+        default_factory=lambda: ["core_bi", "explore", "fact"]
+    )
+    table_allowlist: List[str] = Field(default_factory=list)
+    table_patterns: List[str] = Field(
+        default_factory=lambda: ["fct_*", "fact_*", "orders"]
+    )
+    exclude_dimension_tables: bool = True
+
+
 class MappingProfile(BaseModel):
     """Complete customer mapping profile."""
     profile_name: str
     description: Optional[str] = ""
+    explore_policy: ExplorePolicy = Field(default_factory=ExplorePolicy)
     auto_generate_kpi_measures: bool = False
     use_dimension_groups: bool = True
     fields_hidden_by_default: bool = False

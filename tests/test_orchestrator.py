@@ -50,6 +50,12 @@ class TestSyncOrchestrator(unittest.TestCase):
             display_name="orders",
             bigquery_table="test-project.test_dataset.orders",
             columns=[SchemaColumn(name="order_id", data_type="STRING")],
+            table_aspects={
+                "semantic-curation": {
+                    "status": "CERTIFIED",
+                    "governance_tags": ["certified", "core_bi"],
+                }
+            },
         )
         mock_dpx.get_dataset_entries.return_value = [entry]
 
@@ -93,6 +99,12 @@ class TestSyncOrchestrator(unittest.TestCase):
             display_name="orders",
             bigquery_table="test-project.test_dataset.orders",
             columns=[SchemaColumn(name="order_id", data_type="STRING")],
+            table_aspects={
+                "semantic-curation": {
+                    "status": "CERTIFIED",
+                    "governance_tags": ["certified", "core_bi"],
+                }
+            },
         )
         mock_dpx.get_dataset_entries.return_value = [entry]
 
@@ -163,6 +175,12 @@ class TestSyncOrchestrator(unittest.TestCase):
             display_name="t1",
             bigquery_table="proj.ds.t1",
             columns=[SchemaColumn(name="id", data_type="STRING")],
+            table_aspects={
+                "semantic-curation": {
+                    "status": "CERTIFIED",
+                    "governance_tags": ["certified", "core_bi"],
+                }
+            },
         )
         fake_catalog.get_dataset_entries.return_value = [entry]
 
@@ -181,6 +199,56 @@ class TestSyncOrchestrator(unittest.TestCase):
         fake_catalog.get_dataset_entries.assert_called_once()
         fake_deployer.ensure_dev_mode.assert_called_once()
         self.assertEqual(fake_deployer.create_or_update_file.call_count, 2)  # 1 base view + 1 base explore
+
+    def test_explore_policy_scoping_orchestration(self):
+        """Verifies explore_policy generates base views for all tables but scopes explores to tagged entities."""
+        fake_catalog = MagicMock()
+        orders_entry = CatalogEntry(
+            resource_name="//dataplex/fake/orders",
+            entry_id="orders",
+            display_name="orders",
+            bigquery_table="proj.ds.orders",
+            columns=[SchemaColumn(name="order_id", data_type="STRING")],
+            table_aspects={
+                "semantic-curation": {
+                    "status": "CERTIFIED",
+                    "governance_tags": ["certified", "core_bi"],
+                }
+            },
+        )
+        items_entry = CatalogEntry(
+            resource_name="//dataplex/fake/order_items",
+            entry_id="order_items",
+            display_name="order_items",
+            bigquery_table="proj.ds.order_items",
+            columns=[SchemaColumn(name="item_id", data_type="STRING")],
+            table_aspects={
+                "semantic-curation": {
+                    "status": "CERTIFIED",
+                    "governance_tags": ["certified", "sales"],
+                }
+            },
+        )
+        fake_catalog.get_dataset_entries.return_value = [orders_entry, items_entry]
+
+        orchestrator = SyncOrchestrator(
+            str(self.config_file),
+            catalog_client=fake_catalog,
+        )
+
+        results = orchestrator.run(deploy=False, scaffold=False)
+        self.assertEqual(results["tables_processed"], 2)
+        self.assertEqual(set(results["views_generated"]), {"orders", "order_items"})
+        # Only orders is tagged with core_bi; order_items is excluded from explore generation
+        self.assertEqual(results["explores_generated"], ["orders"])
+
+        # Base views exist for both
+        self.assertTrue((self.out_dir / "views" / "base" / "orders.base.view.lkml").exists())
+        self.assertTrue((self.out_dir / "views" / "base" / "order_items.base.view.lkml").exists())
+
+        # Base explore only exists for orders
+        self.assertTrue((self.out_dir / "explores" / "base" / "orders.base.explore.lkml").exists())
+        self.assertFalse((self.out_dir / "explores" / "base" / "order_items.base.explore.lkml").exists())
 
 
 if __name__ == "__main__":

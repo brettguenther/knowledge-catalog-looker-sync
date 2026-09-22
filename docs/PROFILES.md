@@ -87,12 +87,11 @@ Each profile is a YAML document validated against the `MappingProfile` Pydantic 
 | `fields_hidden_by_default` | Boolean | No | `false` | When false (default), generated base views follow standard LookML: certified fields are visible by default, uncertified fields explicitly declare `hidden: yes`, and downstream refinements (`curated/*.view.lkml`) remain visible by default. When true, emits `fields_hidden_by_default: yes` on the view and `hidden: no` on certified fields. |
 | `max_suggestions_limit` | Integer | No | `10` | Maximum count threshold for static LookML suggestions. Static `suggestions: [...]` are only emitted if the unique value count is strictly less than this threshold (`< 10`). Non-comprehensive or high-cardinality lists are omitted so Looker dynamically queries BigQuery distinct values. |
 | `suggestions_require_comprehensive_tag` | Boolean | No | `false` | When true, requires a field to have a tag matching `comprehensive_tags` to emit static suggestions. |
-| `comprehensive_tags` | List[String] | No | `["comprehensive", "closed_list", "exhaustive"]` | Tags indicating that a field's allowed values represent an exhaustive, closed list. |
-| `use_dimension_groups` | Boolean | No | `true` | When true, automatically maps temporal columns (`TIMESTAMP`, `DATETIME`, `DATE`) to LookML `dimension_group` fields of `type: time`. |
 | `use_ai_data_documentation` | Boolean | No | `true` | When true, falls back to Dataplex `DATA_DOCUMENTATION` scan `overview` and column `description` metadata when curated or BigQuery descriptions are empty. |
 | `auto_generate_partition_cluster_filters` | Boolean | No | `false` | When true, synthesizes dedicated LookML `filter:` fields (`<col>_filter`) for BigQuery partition and cluster keys and tags the dimensions with `partition_key` / `cluster_key`. |
 | `unhide_partition_cluster_dimensions` | Boolean | No | `true` | When `auto_generate_partition_cluster_filters` is enabled, unhides partition and cluster dimensions so users and explores can filter on them. |
 | `always_filter_on_partition_key` | Boolean | No | `false` | When true, generated base explores (`explores/base/*.base.explore.lkml`) include an `always_filter:` block on the table's partition key using `default_partition_filter_value` (default `"30 days"`). |
+| `explore_policy` | Object | No | `{}` | Declarative policy governing which catalog entities generate LookML base explores (`explores/base/*.base.explore.lkml`). Controls strategy, required governance tags, patterns, allowlists, and dimension table exclusion. |
 | `default_timeframes` | List[String] | No | `["raw", "time", "date", "week", "month", "quarter", "year"]` | Timeframes generated for `TIMESTAMP` and `DATETIME` dimension groups. |
 | `date_timeframes` | List[String] | No | `["raw", "date", "week", "month", "quarter", "year"]` | Timeframes generated for `DATE` dimension groups (omits time-of-day). |
 | `certification_rule` | Object | Yes | &mdash; | Rule determining whether an entity is marked certified (`hidden: no` or visible by default). |
@@ -344,6 +343,72 @@ date_timeframes:
   - "month"
   - "quarter"
   - "year"
+```
+
+---
+
+## Explore Policy (Scoping Looker Explores)
+
+In large enterprise data warehouses, generating a Looker Explore for every single ingested table leads to Explore bloat in the Looker UI, confusion for business users, and potential performance degradation. In star and snowflake schemas, standalone explores should typically only be created for central business fact tables (e.g. `orders`, `fct_sales`), while dimension tables (e.g. `order_items`, `customers`, `dim_store`) should only participate as joined views within those fact explores.
+
+The `explore_policy` block declaratively controls which catalog entities generate `.base.explore.lkml` files:
+
+```yaml
+explore_policy:
+  enabled: true
+  strategy: "tagged"  # "tagged", "allowlist", "patterns", "root_only", "all"
+  required_tags: ["core_bi", "explore", "fact"]
+  table_allowlist: []
+  table_patterns: ["fct_*", "fact_*", "orders"]
+  exclude_dimension_tables: true
+```
+
+### Schema Parameters
+
+| Parameter | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `enabled` | Boolean | `true` | When false, suppresses all explore generation completely across the sync run. |
+| `strategy` | String | `"tagged"` | Selection heuristic to determine which tables generate explores: `"tagged"`, `"allowlist"`, `"patterns"`, `"root_only"`, or `"all"`. |
+| `required_tags` | List[String] | `["core_bi", "explore", "fact"]` | Case-insensitive governance tags required on a table when using `strategy: "tagged"`. |
+| `table_allowlist` | List[String] | `[]` | Explicit list of table names or view names that always qualify for explore generation, regardless of strategy. |
+| `table_patterns` | List[String] | `["fct_*", "fact_*", "orders"]` | Glob patterns evaluated against table and view names when using `strategy: "patterns"`. |
+| `exclude_dimension_tables` | Boolean | `true` | When true, automatically excludes tables detected as dimension entities from generating standalone explores. |
+
+### Supported Selection Strategies
+
+1. **`tagged` (Recommended Default)**:
+   Only catalog entities with at least one governance tag matching `required_tags` generate explores. For example, if `orders` is tagged with `core_bi` and `order_items` is tagged with `sales`, only `orders.base.explore.lkml` is generated. `order_items` is still generated as a base view and joined into `orders`.
+2. **`allowlist`**:
+   Only tables explicitly specified in `table_allowlist` (or passed via CLI `--explore-table` / `explore_tables` config) generate explores.
+3. **`patterns`**:
+   Evaluates glob expressions from `table_patterns` against `table_name`, `display_name`, and `view_name`. For example, `fct_*` matches `fct_sales_daily`, and `orders` matches the `orders` fact table while skipping `order_items`.
+4. **`root_only`**:
+   Uses join graph topology to identify root entities:
+   - Tables with outgoing foreign-key joins (`entry.joins > 0`) generate explores.
+   - Tables that are purely target dimensions of other tables' joins without outgoing joins are omitted.
+   - Standalone unjoined tables are retained unless excluded by `exclude_dimension_tables`.
+5. **`all`**:
+   Generates base explores for all ingested catalog tables (subject to `exclude_dimension_tables`).
+
+### Dimension Table Exclusion Heuristics
+
+When `exclude_dimension_tables: true` is active, the engine prevents standalone explore generation for tables that meet any of the following criteria:
+- **Prefix / Suffix**: Table name starts with `dim_`, `dimension_`, or ends with `_dim`.
+- **Governance Tags**: Table has an aspect tag matching `dimension`, `dim`, or `lookup`.
+- **Join Graph Position**: Table is a join target in another table's joins and possesses no outgoing joins.
+
+> Note: Tables explicitly declared in `table_allowlist` or via `--explore-table` always generate explores, bypassing dimension exclusion.
+
+### CLI and Sync Config Overrides
+
+You can override the explore policy directly from `config/sync_config.yaml`:
+```yaml
+explore_tables:
+  - "orders"
+```
+Or via the sync CLI flag:
+```bash
+python3 main.py sync --config config/sync_config.yaml --explore-table orders --pr
 ```
 
 ---

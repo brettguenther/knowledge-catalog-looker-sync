@@ -386,6 +386,112 @@ class TestSemanticMappingEngine(unittest.TestCase):
         dim_status_tagged = next(d for d in view_tagged.dimensions if d.name == "status_tagged")
         self.assertEqual(dim_status_tagged.suggestions, ["OPEN", "CLOSED"])  # Has 'exhaustive' tag -> included
 
+    def test_explore_policy_strategies_and_heuristics(self):
+        """Tests declarative ExplorePolicy strategies, tag matching, patterns, allowlists, and dimension table exclusion."""
+        orders_entry = CatalogEntry(
+            resource_name="//dataplex/orders",
+            entry_id="orders",
+            display_name="orders",
+            bigquery_table="proj.ds.orders",
+            table_aspects={
+                "semantic-curation": {
+                    "status": "CERTIFIED",
+                    "governance_tags": ["certified", "core_bi"],
+                }
+            },
+            joins=[
+                JoinRelationship(
+                    source_table="orders",
+                    target_table="order_items",
+                    join_keys=[("order_id", "order_id")],
+                )
+            ],
+        )
+        items_entry = CatalogEntry(
+            resource_name="//dataplex/order_items",
+            entry_id="order_items",
+            display_name="order_items",
+            bigquery_table="proj.ds.order_items",
+            table_aspects={
+                "semantic-curation": {
+                    "status": "CERTIFIED",
+                    "governance_tags": ["certified", "sales"],
+                }
+            },
+        )
+        dim_store_entry = CatalogEntry(
+            resource_name="//dataplex/dim_store",
+            entry_id="dim_store",
+            display_name="dim_store",
+            bigquery_table="proj.ds.dim_store",
+            table_aspects={
+                "semantic-curation": {
+                    "status": "CERTIFIED",
+                    "governance_tags": ["certified", "core_bi"],
+                }
+            },
+        )
+        fct_sales_entry = CatalogEntry(
+            resource_name="//dataplex/fct_sales",
+            entry_id="fct_sales",
+            display_name="fct_sales",
+            bigquery_table="proj.ds.fct_sales",
+            table_aspects={},
+        )
+        all_entries = [orders_entry, items_entry, dim_store_entry, fct_sales_entry]
+
+        # 1. Strategy: "tagged" (Default: required_tags=["core_bi", "explore", "fact"])
+        self.profile.explore_policy.enabled = True
+        self.profile.explore_policy.strategy = "tagged"
+        self.profile.explore_policy.required_tags = ["core_bi", "explore", "fact"]
+        self.profile.explore_policy.table_allowlist = []
+        self.profile.explore_policy.exclude_dimension_tables = True
+        mapper = SemanticMapper(self.profile)
+
+        self.assertTrue(mapper.should_generate_explore(orders_entry, all_entries))
+        self.assertFalse(mapper.should_generate_explore(items_entry, all_entries))  # 'sales' != 'core_bi'
+        # dim_store has 'core_bi' but is excluded because name starts with dim_
+        self.assertFalse(mapper.should_generate_explore(dim_store_entry, all_entries))
+
+        # 2. Strategy: "allowlist"
+        self.profile.explore_policy.strategy = "allowlist"
+        self.profile.explore_policy.table_allowlist = ["order_items"]
+        self.assertFalse(mapper.should_generate_explore(orders_entry, all_entries))
+        self.assertTrue(mapper.should_generate_explore(items_entry, all_entries))
+
+        # 3. Strategy: "patterns"
+        self.profile.explore_policy.strategy = "patterns"
+        self.profile.explore_policy.table_allowlist = []
+        self.profile.explore_policy.table_patterns = ["fct_*", "orders"]
+        self.assertTrue(mapper.should_generate_explore(orders_entry, all_entries))
+        self.assertTrue(mapper.should_generate_explore(fct_sales_entry, all_entries))
+        self.assertFalse(mapper.should_generate_explore(items_entry, all_entries))
+
+        # 4. Strategy: "root_only"
+        self.profile.explore_policy.strategy = "root_only"
+        self.profile.explore_policy.table_allowlist = []
+        # orders has outgoing joins -> root -> True
+        self.assertTrue(mapper.should_generate_explore(orders_entry, all_entries))
+        # items_entry has no outgoing joins and is a target table of orders -> not a root -> False
+        self.assertFalse(mapper.should_generate_explore(items_entry, all_entries))
+
+        # 5. Dimension table exclusion heuristics (name prefix, dimension tag, join target)
+        self.profile.explore_policy.strategy = "all"
+        self.profile.explore_policy.exclude_dimension_tables = True
+        # dim_store is excluded due to dim_ prefix
+        self.assertFalse(mapper.should_generate_explore(dim_store_entry, all_entries))
+        # items_entry is excluded because it is purely a join target with no outgoing joins
+        self.assertFalse(mapper.should_generate_explore(items_entry, all_entries))
+
+        # Explicit allowlist overrides dimension exclusion
+        self.profile.explore_policy.table_allowlist = ["dim_store"]
+        self.assertTrue(mapper.should_generate_explore(dim_store_entry, all_entries))
+
+        # 6. Policy disabled -> all False
+        self.profile.explore_policy.enabled = False
+        self.assertFalse(mapper.should_generate_explore(orders_entry, all_entries))
+        self.assertFalse(mapper.should_generate_explore(dim_store_entry, all_entries))
+
 
 if __name__ == "__main__":
     unittest.main()
