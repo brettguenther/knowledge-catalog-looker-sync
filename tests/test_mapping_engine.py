@@ -267,7 +267,13 @@ class TestSemanticMappingEngine(unittest.TestCase):
 
         sale_filter = next(f for f in fact_view.filters if f.name == "sale_date_filter")
         self.assertEqual(sale_filter.type, "date")
-        self.assertEqual(sale_filter.suggest_dimension, "sale_date")
+        self.assertIsNone(sale_filter.suggest_dimension)
+        self.assertEqual(sale_filter.sql, "{% condition sale_date_filter %} ${sale_date} {% endcondition %}")
+
+        store_filter = next(f for f in fact_view.filters if f.name == "store_id_filter")
+        self.assertEqual(store_filter.type, "string")
+        self.assertEqual(store_filter.suggest_dimension, "store_id")
+        self.assertEqual(store_filter.sql, "{% condition store_id_filter %} ${store_id} {% endcondition %}")
 
         # Verify partition & cluster dimensions were unhidden and tagged
         dg_sale = next(dg for dg in fact_view.dimension_groups if dg.name == "sale")

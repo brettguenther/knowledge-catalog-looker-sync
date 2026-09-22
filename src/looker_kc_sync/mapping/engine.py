@@ -197,7 +197,7 @@ class SemanticMapper:
         col: SchemaColumn,
         meta: Dict[str, Any],
         raw_type: str,
-        suggest_dim_name: str,
+        target_dim_name: str,
         is_partition: bool,
         is_cluster: bool,
     ) -> LookMLFilter:
@@ -213,12 +213,17 @@ class SemanticMapper:
 
         base_label = meta.get("label") or title_case(col.name)
         key_kind = "Partition & Cluster" if (is_partition and is_cluster) else ("Partition" if is_partition else "Cluster")
+        filter_name = f"{col.name}_filter"
+        sql_condition = f"{{% condition {filter_name} %}} ${{{target_dim_name}}} {{% endcondition %}}"
+        suggest_dimension = target_dim_name if filter_type == "string" else None
+
         return LookMLFilter(
-            name=f"{col.name}_filter",
+            name=filter_name,
             type=filter_type,
+            sql=sql_condition,
             label=f"{base_label} Filter",
             description=f"Dedicated {key_kind.lower()} key filter for {base_label}.",
-            suggest_dimension=suggest_dim_name,
+            suggest_dimension=suggest_dimension,
         )
 
     def _map_dimension_group(
@@ -364,7 +369,7 @@ class SemanticMapper:
                             col=col,
                             meta=meta,
                             raw_type=raw_type,
-                            suggest_dim_name=f"{dg.name}_date",
+                            target_dim_name=f"{dg.name}_date",
                             is_partition=is_part,
                             is_cluster=is_clust,
                         )
@@ -382,7 +387,7 @@ class SemanticMapper:
                         col=col,
                         meta=meta,
                         raw_type=raw_type,
-                        suggest_dim_name=dim.name,
+                        target_dim_name=dim.name,
                         is_partition=is_part,
                         is_cluster=is_clust,
                     )

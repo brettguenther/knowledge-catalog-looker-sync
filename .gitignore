@@ -61,7 +61,8 @@ tmp/
 Thumbs.db
 
 # Internal Spec & Scratch
-.resources/
+.resources/*
+!.resources/ROADMAP_FEATURES.md
 
 # Local Runtime Configuration
 config/sync_config.yaml

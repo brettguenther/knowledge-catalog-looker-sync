@@ -48,6 +48,7 @@ flowchart TD
   - Validates generated LookML syntax locally with `lkml` prior to remote staging.
   - Development Mode: Uses `looker-cli` directly for authenticated directory creation, dev-branch checkout, file deployment, and project validation (`validate_project`).
   - Production GitOps: Sync bot reuses existing open `kc-sync/*` Pull Requests (`PATCH` + force-push) or opens a new Pull Request scoped strictly to machine-managed base views and base explores.
+  - Automated Looker CI: Downstream LookML repositories are expected to run [Looker CI Suites](https://docs.cloud.google.com/looker/docs/ci-create-suite) on PR updates as an additional validation gate before merging to production.
 
 ## Repository Structure
 
@@ -282,3 +283,14 @@ gcloud scheduler jobs create http kc-looker-sync-trigger \
   --http-method=POST \
   --oauth-service-account-email="<SCHEDULER_SERVICE_ACCOUNT_EMAIL>"
 ```
+
+## Automated Looker CI Validation on Pull Requests
+
+When running in GitOps mode (`--pr`), the synchronization engine creates and updates Pull Requests against the target LookML repository with generated base views and explores.
+
+To enforce semantic integrity and prevent breaking changes from reaching production, downstream LookML repositories are expected to configure automated [Looker CI Suites](https://docs.cloud.google.com/looker/docs/ci-create-suite) (invoked via GitHub Actions, webhooks, or the Looker API on PR updates):
+
+1. **Model & Explore Validation**: Looker validates all models against the Pull Request feature branch, verifying that new base explores, joined views, and Liquid conditional filters (`{% condition %} ... {% endcondition %}`) compile cleanly.
+2. **Refinement Compatibility**: Verifies that human-authored refinements in `views/curated/*.view.lkml` cleanly layer over newly synchronized fields in `views/base/*.base.view.lkml`.
+3. **Data Tests Execution**: Runs project-defined LookML `test:` blocks to verify that data contracts and core assumptions hold true before merging to `main`.
+

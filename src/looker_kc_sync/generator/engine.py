@@ -92,6 +92,8 @@ def _filter_to_dict(f: LookMLFilter) -> Dict[str, Any]:
         "name": f.name,
         "type": f.type,
     }
+    if f.sql:
+        d["sql"] = f.sql
     if f.label:
         d["label"] = f.label
     if f.description:

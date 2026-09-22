@@ -62,9 +62,9 @@ class TestLookMLGenerator(unittest.TestCase):
                 LookMLFilter(
                     name="created_at_filter",
                     type="date",
+                    sql="{% condition created_at_filter %} ${created_date} {% endcondition %}",
                     label="Created At Filter",
                     description="Dedicated partition filter",
-                    suggest_dimension="created_date",
                 )
             ],
             measures=[
@@ -85,12 +85,17 @@ class TestLookMLGenerator(unittest.TestCase):
         self.assertIn("hidden: yes", rendered)  # internal_code explicitly hidden
         self.assertIn('synonyms: ["client id", "user id"]', rendered)
         self.assertIn("filter: created_at_filter", rendered)
+        self.assertIn("{% condition created_at_filter %} ${created_date} {% endcondition %}", rendered)
 
         # Verify AST parser parses without exception
         parsed = lkml.load(rendered)
         self.assertEqual(len(parsed["views"]), 1)
         self.assertEqual(parsed["views"][0]["name"], "customers")
         self.assertEqual(parsed["views"][0]["filters"][0]["name"], "created_at_filter")
+        self.assertEqual(
+            parsed["views"][0]["filters"][0]["sql"],
+            "{% condition created_at_filter %} ${created_date} {% endcondition %}",
+        )
 
         # Render base explore
         explore = LookMLExplore(

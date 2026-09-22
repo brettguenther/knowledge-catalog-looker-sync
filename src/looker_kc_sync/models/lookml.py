@@ -43,6 +43,7 @@ class LookMLFilter(BaseModel):
     """Represents a LookML filter field (e.g. dedicated partition or cluster key filter)."""
     name: str
     type: str = "string"
+    sql: Optional[str] = None
     label: Optional[str] = None
     description: Optional[str] = None
     suggest_dimension: Optional[str] = None
