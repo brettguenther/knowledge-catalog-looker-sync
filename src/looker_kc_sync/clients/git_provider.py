@@ -34,13 +34,14 @@ class GitHubProvider:
         # Check local .env file
         env_file = Path(".env")
         if env_file.exists():
-            for line in env_file.read_text().splitlines():
-                line = line.strip()
+            try:
+                from dotenv import dotenv_values
+                env_vals = dotenv_values(str(env_file))
                 for key in ("GITHUB_TOKEN", "GITHUB_PAT"):
-                    if line.startswith(f"{key}="):
-                        val = line.split("=", 1)[1].strip("\"'")
-                        if val:
-                            return val
+                    if env_vals.get(key):
+                        return str(env_vals[key]).strip()
+            except Exception:
+                pass
 
         # Try Google Secret Manager via Python client library (ADC)
         if self.project_id:

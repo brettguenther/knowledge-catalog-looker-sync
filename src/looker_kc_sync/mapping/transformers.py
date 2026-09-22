@@ -35,14 +35,25 @@ def map_lookup_value(value: Any, lookup_map: Optional[dict]) -> Optional[str]:
     return str_val
 
 
-def derive_dimension_group_name(column_name: str, reserved_names: set[str]) -> str:
-    """Strips temporal suffixes (_date, _time, _at, _timestamp, _datetime) to form the LookML dimension_group name.
+DEFAULT_TEMPORAL_SUFFIXES = ("_timestamp", "_datetime", "_date", "_time", "_at")
+DEFAULT_TEMPORAL_LABEL_SUFFIXES = (
+    " Date", " Time", " Timestamp", " Datetime", " date", " time", " timestamp", " datetime"
+)
+
+
+def derive_dimension_group_name(
+    column_name: str,
+    reserved_names: set[str],
+    suffixes: Optional[Sequence[str]] = None,
+) -> str:
+    """Strips temporal suffixes to form the LookML dimension_group name.
     
     If stripping the suffix results in an empty string or a name already present in reserved_names
     (e.g. other table columns or already generated fields), the original column name is retained.
     """
     col = column_name.lower()
-    for suffix in ("_timestamp", "_datetime", "_date", "_time", "_at"):
+    check_suffixes = suffixes if suffixes is not None else DEFAULT_TEMPORAL_SUFFIXES
+    for suffix in check_suffixes:
         if col.endswith(suffix):
             base = col[:-len(suffix)]
             if base and base not in reserved_names:
@@ -51,18 +62,18 @@ def derive_dimension_group_name(column_name: str, reserved_names: set[str]) -> s
     return col
 
 
-def clean_dimension_group_label(label: Optional[str]) -> Optional[str]:
-    """Strips temporal suffix words (Date, Time, Timestamp, Datetime) from the label.
-    
-    Looker automatically combines the dimension_group label with each timeframe name
-    (e.g., 'Order Placed' + 'Date' -> 'Order Placed Date'). Stripping redundant suffixes
-    prevents duplicate labels like 'Order Placed Date Date' in the field picker.
-    """
+def clean_dimension_group_label(
+    label: Optional[str],
+    suffixes: Optional[Sequence[str]] = None,
+) -> Optional[str]:
+    """Strips temporal suffix words from the label to prevent stutter in Looker's field picker."""
     if not label:
         return None
-    for suffix in (" Date", " Time", " Timestamp", " Datetime", " date", " time", " timestamp", " datetime"):
+    check_suffixes = suffixes if suffixes is not None else DEFAULT_TEMPORAL_LABEL_SUFFIXES
+    for suffix in check_suffixes:
         if label.endswith(suffix):
             cleaned = label[:-len(suffix)].strip()
             if cleaned:
                 return cleaned
     return label
+

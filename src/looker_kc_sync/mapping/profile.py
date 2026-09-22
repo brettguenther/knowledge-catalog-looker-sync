@@ -69,3 +69,42 @@ class MappingProfile(BaseModel):
     certification_rule: CertificationRule
     exclusions: List[ExclusionRule] = Field(default_factory=list)
     field_mappings: FieldMappings = Field(default_factory=FieldMappings)
+
+    # Configurable Business Heuristics
+    kpi_measure_keywords: List[str] = Field(
+        default_factory=lambda: ["amount", "price", "revenue", "cost", "total", "sales"]
+    )
+    kpi_measure_type: str = "sum"
+    kpi_measure_prefix: str = "total_"
+    primary_key_patterns: List[str] = Field(
+        default_factory=lambda: ["{view_name}_id", "id"]
+    )
+    primary_key_tags: List[str] = Field(
+        default_factory=lambda: ["primary_key"]
+    )
+    temporal_suffixes: List[str] = Field(
+        default_factory=lambda: ["_timestamp", "_datetime", "_date", "_time", "_at"]
+    )
+    temporal_label_suffixes: List[str] = Field(
+        default_factory=lambda: [
+            " Date", " Time", " Timestamp", " Datetime",
+            " date", " time", " timestamp", " datetime",
+        ]
+    )
+    data_type_map: Dict[str, str] = Field(
+        default_factory=lambda: {
+            "STRING": "string",
+            "INTEGER": "number",
+            "INT64": "number",
+            "FLOAT": "number",
+            "FLOAT64": "number",
+            "NUMERIC": "number",
+            "BIGNUMERIC": "number",
+            "BOOLEAN": "yesno",
+            "BOOL": "yesno",
+            "TIMESTAMP": "date_time",
+            "DATETIME": "date_time",
+            "DATE": "date_date",
+        }
+    )
+

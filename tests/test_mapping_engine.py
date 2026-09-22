@@ -179,6 +179,41 @@ class TestSemanticMappingEngine(unittest.TestCase):
         dim_date = next(d for d in view_scalar.dimensions if d.name == "status_date")
         self.assertEqual(dim_date.type, "date_time")
 
+    def test_custom_heuristics_in_profile(self):
+        # Override heuristics on profile: custom KPI keyword and custom PK pattern
+        self.profile.auto_generate_kpi_measures = True
+        self.profile.kpi_measure_keywords = ["custom_metric"]
+        self.profile.kpi_measure_prefix = "agg_"
+        self.profile.primary_key_patterns = ["pk_{view_name}"]
+
+        entry = CatalogEntry(
+            resource_name="//dataplex/custom",
+            entry_id="custom_table",
+            display_name="custom_table",
+            bigquery_table="project.dataset.custom_table",
+            columns=[
+                SchemaColumn(name="pk_custom_table", data_type="STRING"),
+                SchemaColumn(name="custom_metric_val", data_type="FLOAT"),
+            ],
+            table_aspects={},
+            column_aspects={
+                "pk_custom_table": {"semantic-curation": {"status": "CERTIFIED"}},
+                "custom_metric_val": {"semantic-curation": {"status": "CERTIFIED"}},
+            },
+        )
+        mapper = SemanticMapper(self.profile)
+        view = mapper.map_entry_to_view(entry)
+
+        # Verify custom PK pattern was matched
+        pk_dim = next(d for d in view.dimensions if d.name == "pk_custom_table")
+        self.assertTrue(pk_dim.primary_key)
+
+        # Verify custom KPI keyword and prefix were applied
+        measure = next(m for m in view.measures if m.name == "agg_custom_metric_val")
+        self.assertEqual(measure.name, "agg_custom_metric_val")
+        self.assertEqual(measure.type, "sum")
+
 
 if __name__ == "__main__":
     unittest.main()
+

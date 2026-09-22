@@ -143,6 +143,42 @@ class TestSyncOrchestrator(unittest.TestCase):
         self.assertEqual(len(results["errors"]), 1)
         self.assertIn("broken_table", results["errors"][0])
 
+    def test_config_missing_raises_file_not_found(self):
+        """Verify that a missing config file fails loudly instead of falling back to .example."""
+        from looker_kc_sync.orchestrator import load_sync_config
+        with self.assertRaises(FileNotFoundError) as ctx:
+            load_sync_config("nonexistent_config_12345.yaml")
+        self.assertIn("nonexistent_config_12345.yaml", str(ctx.exception))
+
+    def test_dependency_injection_catalog_and_deployer(self):
+        """Verify protocol-driven dependency injection of custom CatalogSource and LookMLDeployer."""
+        fake_catalog = MagicMock()
+        entry = CatalogEntry(
+            resource_name="//dataplex/fake/t1",
+            entry_id="t1",
+            display_name="t1",
+            bigquery_table="proj.ds.t1",
+            columns=[SchemaColumn(name="id", data_type="STRING")],
+        )
+        fake_catalog.get_dataset_entries.return_value = [entry]
+
+        fake_deployer = MagicMock()
+        fake_deployer.validate_project.return_value = (True, "Valid")
+
+        orchestrator = SyncOrchestrator(
+            str(self.config_file),
+            catalog_client=fake_catalog,
+            looker_client=fake_deployer,
+        )
+
+        results = orchestrator.run(deploy=True, scaffold=False)
+        self.assertEqual(results["tables_processed"], 1)
+        self.assertTrue(results["looker_deployed"])
+        fake_catalog.get_dataset_entries.assert_called_once()
+        fake_deployer.ensure_dev_mode.assert_called_once()
+        fake_deployer.create_or_update_file.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -5,7 +5,7 @@ from pathlib import Path
 import re
 from typing import Any, Dict, List, Optional
 import yaml
-from pydantic import BaseModel
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from looker_kc_sync.clients.dataplex import DataplexCatalogClient
 from looker_kc_sync.clients.looker import LookerClient
@@ -13,6 +13,7 @@ from looker_kc_sync.generator.engine import LookMLGenerator
 from looker_kc_sync.mapping.engine import SemanticMapper
 from looker_kc_sync.mapping.profile import MappingProfile
 from looker_kc_sync.models.lookml import LookMLView
+from looker_kc_sync.protocols import CatalogSource, LookMLDeployer
 
 
 def _expand_env(value: Any) -> Any:
@@ -35,24 +36,15 @@ def _expand_env(value: Any) -> Any:
     return value
 
 
-def _load_dotenv(path: str = ".env") -> None:
-    """Loads key-value pairs from a local .env file into os.environ if not already set."""
-    env_file = Path(path)
-    if not env_file.exists():
-        return
-    for line in env_file.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "=" in line:
-            k, v = line.split("=", 1)
-            k = k.strip()
-            v = v.strip().strip("\"'")
-            if k and k not in os.environ:
-                os.environ[k] = v
+class SyncConfig(BaseSettings):
+    """Configuration for synchronization, with automatic environment and .env resolution."""
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
 
-
-class SyncConfig(BaseModel):
     project_id: str
     location: str = "us-central1"
     dataset_id: str
@@ -60,66 +52,67 @@ class SyncConfig(BaseModel):
     git_repo: Optional[str] = None
     git_base_branch: str = "master"
     connection_name: str
-    model_name: str
+    model_name: str = "retail"
     active_profile: str
     output_dir: str = "output"
     tables: Optional[List[str]] = None
 
 
+def load_sync_config(config_path: str, **overrides: Any) -> SyncConfig:
+    """Loads sync configuration from a YAML file, merging with environment variables and .env.
+    
+    Raises:
+        FileNotFoundError: If the specified config_path does not exist.
+    """
+    path = Path(config_path)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Configuration file not found: '{config_path}'. "
+            f"Please provide a valid configuration file."
+        )
+
+    with open(path, "r") as f:
+        raw_cfg = yaml.safe_load(f) or {}
+
+    raw_cfg = _expand_env(raw_cfg)
+    raw_cfg.update({k: v for k, v in overrides.items() if v is not None})
+    return SyncConfig(**raw_cfg)
+
+
 class SyncOrchestrator:
     """End-to-end sync engine coordinating KC extraction and Looker LookML deployment."""
 
-    def __init__(self, config_path: str):
-        _load_dotenv()
+    def __init__(
+        self,
+        config_path: str,
+        catalog_client: Optional[CatalogSource] = None,
+        looker_client: Optional[LookMLDeployer] = None,
+        generator: Optional[LookMLGenerator] = None,
+    ):
         self.config_path = Path(config_path)
-        if not self.config_path.exists():
-            example_candidate = Path(str(self.config_path) + ".example")
-            if example_candidate.exists():
-                self.config_path = example_candidate
-
-        with open(self.config_path, "r") as f:
-            raw_cfg = yaml.safe_load(f) or {}
-        raw_cfg = _expand_env(raw_cfg)
-
-        # Allow environment variable overrides for remote deployment
-        env_mappings = {
-            "project_id": "PROJECT_ID",
-            "location": "LOCATION",
-            "dataset_id": "DATASET_ID",
-            "looker_project_id": "LOOKER_PROJECT_ID",
-            "git_repo": "GIT_REPO",
-            "git_base_branch": "GIT_BASE_BRANCH",
-            "connection_name": "CONNECTION_NAME",
-            "model_name": "MODEL_NAME",
-            "active_profile": "ACTIVE_PROFILE",
-            "output_dir": "OUTPUT_DIR",
-        }
-        for field, env_key in env_mappings.items():
-            if os.environ.get(env_key):
-                raw_cfg[field] = os.environ[env_key]
-
-        self.config = SyncConfig(**raw_cfg)
+        self.config = load_sync_config(config_path)
 
         # Load mapping profile
         profile_path = Path(self.config.active_profile)
         if not profile_path.is_absolute():
             profile_path = Path.cwd() / profile_path
+        if not profile_path.exists():
+            raise FileNotFoundError(f"Mapping profile not found: '{profile_path}'")
         with open(profile_path, "r") as f:
             raw_profile = yaml.safe_load(f)
         self.profile = MappingProfile(**raw_profile)
 
-        # Clients & Generator
-        self.catalog_client = DataplexCatalogClient(
+        # Injected or default dependencies adhering to protocols
+        self.catalog_client: CatalogSource = catalog_client or DataplexCatalogClient(
             project_id=self.config.project_id,
             location=self.config.location,
         )
         self.mapper = SemanticMapper(self.profile)
-        template_dir = Path(__file__).parent / "generator" / "templates"
-        self.generator = LookMLGenerator(template_dir)
-        self._looker_client: Optional[LookerClient] = None
+        self.generator = generator or LookMLGenerator()
+        self._looker_client = looker_client
 
     @property
-    def looker_client(self) -> LookerClient:
+    def looker_client(self) -> LookMLDeployer:
         if self._looker_client is None:
             self._looker_client = LookerClient()
         return self._looker_client
@@ -233,7 +226,6 @@ class SyncOrchestrator:
                 repo_slug=self.config.git_repo,
                 project_id=self.config.project_id,
             )
-            # CRITICAL ARCHITECTURAL INVARIANT:
             # Automated GitOps PRs MUST only touch the machine-managed base views (views/base/*.base.view.lkml).
             # Curated views (views/curated/) and models (models/) belong to human analytics engineers
             # and must NEVER be modified or included in automated sync PRs.
