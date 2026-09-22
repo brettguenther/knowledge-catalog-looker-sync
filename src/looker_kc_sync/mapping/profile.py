@@ -60,6 +60,12 @@ class MappingProfile(BaseModel):
     description: Optional[str] = ""
     auto_generate_kpi_measures: bool = False
     use_dimension_groups: bool = True
+    fields_hidden_by_default: bool = False
+    max_suggestions_limit: int = 10
+    suggestions_require_comprehensive_tag: bool = False
+    comprehensive_tags: List[str] = Field(
+        default_factory=lambda: ["comprehensive", "closed_list", "exhaustive"]
+    )
     default_timeframes: List[str] = Field(
         default_factory=lambda: ["raw", "time", "date", "week", "month", "quarter", "year"]
     )

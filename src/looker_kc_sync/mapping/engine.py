@@ -103,7 +103,8 @@ class SemanticMapper:
         description = self._resolve_attribute(self.profile.field_mappings.description, col_aspects, col) or col.description
         synonyms = self._resolve_attribute(self.profile.field_mappings.synonyms, col_aspects, col) or []
         tags = self._resolve_tags(self.profile.field_mappings.tags, col_aspects)
-        suggestions = self._resolve_attribute(self.profile.field_mappings.suggestions, col_aspects, col) or []
+        raw_suggestions = self._resolve_attribute(self.profile.field_mappings.suggestions, col_aspects, col) or []
+        suggestions = self._filter_suggestions(raw_suggestions, tags)
         format_name = self._resolve_attribute(self.profile.field_mappings.value_format_name, col_aspects, col)
 
         return {
@@ -114,6 +115,29 @@ class SemanticMapper:
             "suggestions": suggestions,
             "format_name": format_name,
         }
+
+    def _filter_suggestions(self, raw_suggestions: Any, tags: List[str]) -> List[str]:
+        """Filters static suggestions to comprehensive lists within the configured limit."""
+        if not raw_suggestions:
+            return []
+        if not isinstance(raw_suggestions, list):
+            if isinstance(raw_suggestions, (tuple, set)):
+                raw_suggestions = list(raw_suggestions)
+            else:
+                raw_suggestions = [raw_suggestions]
+
+        deduped = list(dict.fromkeys(str(s).strip() for s in raw_suggestions if s is not None and str(s).strip()))
+        if not deduped:
+            return []
+
+        if self.profile.suggestions_require_comprehensive_tag:
+            if not any(t in tags for t in self.profile.comprehensive_tags):
+                return []
+
+        if len(deduped) < self.profile.max_suggestions_limit:
+            return deduped
+
+        return []
 
     def _is_primary_key(self, col_name: str, view_name: str, tags: List[str]) -> bool:
         """Determines if a column is a primary key using profile rules and tags."""
@@ -264,7 +288,7 @@ class SemanticMapper:
             view_name=view_name,
             base_view_name=base_view_name,
             sql_table_name=f"`{entry.bigquery_table}`",
-            fields_hidden_by_default=True,
+            fields_hidden_by_default=self.profile.fields_hidden_by_default,
             extension_required=True,
             description=table_desc,
             tags=table_tags,

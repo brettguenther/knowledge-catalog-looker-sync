@@ -2,6 +2,8 @@ profile_name: "dataplex_native"
 description: "Mapping profile for native Dataplex descriptions, overviews, and BigQuery schemas"
 auto_generate_kpi_measures: false
 use_dimension_groups: true
+fields_hidden_by_default: false
+max_suggestions_limit: 10
 
 certification_rule:
   path: "dataplex_stewardship.curated"

@@ -21,7 +21,7 @@ if "synonyms" not in lkml.simple.QUOTED_LITERAL_KEYS:
     lkml.simple.QUOTED_LITERAL_KEYS = lkml.simple.QUOTED_LITERAL_KEYS + ("synonyms",)
 
 
-def _dimension_to_dict(dim: LookMLDimension) -> Dict[str, Any]:
+def _dimension_to_dict(dim: LookMLDimension, fields_hidden_by_default: bool = False) -> Dict[str, Any]:
     d: Dict[str, Any] = {
         "name": dim.name,
         "type": dim.type,
@@ -29,8 +29,14 @@ def _dimension_to_dict(dim: LookMLDimension) -> Dict[str, Any]:
     }
     if dim.primary_key:
         d["primary_key"] = "yes"
+    if fields_hidden_by_default:
+        if not dim.hidden:
+            d["hidden"] = "no"
+    else:
+        if dim.hidden:
+            d["hidden"] = "yes"
+
     if not dim.hidden:
-        d["hidden"] = "no"
         if dim.label:
             d["label"] = dim.label
         if dim.description:
@@ -48,7 +54,7 @@ def _dimension_to_dict(dim: LookMLDimension) -> Dict[str, Any]:
     return d
 
 
-def _dimension_group_to_dict(dg: LookMLDimensionGroup) -> Dict[str, Any]:
+def _dimension_group_to_dict(dg: LookMLDimensionGroup, fields_hidden_by_default: bool = False) -> Dict[str, Any]:
     d: Dict[str, Any] = {
         "name": dg.name,
         "type": dg.type,
@@ -58,8 +64,14 @@ def _dimension_group_to_dict(dg: LookMLDimensionGroup) -> Dict[str, Any]:
         d["timeframes"] = dg.timeframes
     if dg.datatype:
         d["datatype"] = dg.datatype
+    if fields_hidden_by_default:
+        if not dg.hidden:
+            d["hidden"] = "no"
+    else:
+        if dg.hidden:
+            d["hidden"] = "yes"
+
     if not dg.hidden:
-        d["hidden"] = "no"
         if dg.label:
             d["label"] = dg.label
         if dg.description:
@@ -73,26 +85,32 @@ def _dimension_group_to_dict(dg: LookMLDimensionGroup) -> Dict[str, Any]:
     return d
 
 
-def _measure_to_dict(m: LookMLMeasure) -> Dict[str, Any]:
+def _measure_to_dict(m: LookMLMeasure, fields_hidden_by_default: bool = False) -> Dict[str, Any]:
     d: Dict[str, Any] = {
         "name": m.name,
         "type": m.type,
         "sql": m.sql,
     }
+    if fields_hidden_by_default:
+        if not m.hidden:
+            d["hidden"] = "no"
+    else:
+        if m.hidden:
+            d["hidden"] = "yes"
+
     if not m.hidden:
-        d["hidden"] = "no"
-    if m.label:
-        d["label"] = m.label
-    if m.description:
-        d["description"] = m.description
-    if m.synonyms:
-        d["synonyms"] = m.synonyms
-    if m.tags:
-        d["tags"] = m.tags
-    if m.value_format_name:
-        d["value_format_name"] = m.value_format_name
-    if m.group_label:
-        d["group_label"] = m.group_label
+        if m.label:
+            d["label"] = m.label
+        if m.description:
+            d["description"] = m.description
+        if m.synonyms:
+            d["synonyms"] = m.synonyms
+        if m.tags:
+            d["tags"] = m.tags
+        if m.value_format_name:
+            d["value_format_name"] = m.value_format_name
+        if m.group_label:
+            d["group_label"] = m.group_label
     return d
 
 
@@ -104,11 +122,11 @@ def _view_to_dict(view: LookMLView) -> Dict[str, Any]:
     if view.fields_hidden_by_default:
         v["fields_hidden_by_default"] = "yes"
     if view.dimensions:
-        v["dimensions"] = [_dimension_to_dict(d) for d in view.dimensions]
+        v["dimensions"] = [_dimension_to_dict(d, view.fields_hidden_by_default) for d in view.dimensions]
     if view.dimension_groups:
-        v["dimension_groups"] = [_dimension_group_to_dict(dg) for dg in view.dimension_groups]
+        v["dimension_groups"] = [_dimension_group_to_dict(dg, view.fields_hidden_by_default) for dg in view.dimension_groups]
     if view.measures:
-        v["measures"] = [_measure_to_dict(m) for m in view.measures]
+        v["measures"] = [_measure_to_dict(m, view.fields_hidden_by_default) for m in view.measures]
     return v
 
 

@@ -60,7 +60,13 @@ class TestSemanticMappingEngine(unittest.TestCase):
 
         view = mapper.map_entry_to_view(entry)
         self.assertEqual(view.base_view_name, "orders_base")
-        self.assertTrue(view.fields_hidden_by_default)
+        self.assertFalse(view.fields_hidden_by_default)
+
+        # Check fields_hidden_by_default override
+        self.profile.fields_hidden_by_default = True
+        view_hidden_default = mapper.map_entry_to_view(entry)
+        self.assertTrue(view_hidden_default.fields_hidden_by_default)
+        self.profile.fields_hidden_by_default = False
 
         # Check order_id dimension
         dim_id = next(d for d in view.dimensions if d.name == "order_id")
@@ -212,6 +218,71 @@ class TestSemanticMappingEngine(unittest.TestCase):
         measure = next(m for m in view.measures if m.name == "agg_custom_metric_val")
         self.assertEqual(measure.name, "agg_custom_metric_val")
         self.assertEqual(measure.type, "sum")
+
+    def test_suggestions_filtering_and_comprehensiveness(self):
+        mapper = SemanticMapper(self.profile)
+        entry = CatalogEntry(
+            resource_name="//dataplex/suggestions_test",
+            entry_id="test_products",
+            display_name="products",
+            bigquery_table="project.dataset.products",
+            columns=[
+                SchemaColumn(name="category_small", data_type="STRING"),
+                SchemaColumn(name="category_large", data_type="STRING"),
+                SchemaColumn(name="status_tagged", data_type="STRING"),
+            ],
+            table_aspects={},
+            column_aspects={
+                "category_small": {
+                    "semantic-curation": {
+                        "status": "CERTIFIED",
+                        "allowed_values": ["Apparel", "Footwear", "Electronics", "Home & Kitchen", "Accessories"],
+                    }
+                },
+                "category_large": {
+                    "semantic-curation": {
+                        "status": "CERTIFIED",
+                        "allowed_values": [
+                            "Val_1", "Val_2", "Val_3", "Val_4", "Val_5",
+                            "Val_6", "Val_7", "Val_8", "Val_9", "Val_10",
+                            "Val_11", "Val_12",
+                        ],
+                    }
+                },
+                "status_tagged": {
+                    "semantic-curation": {
+                        "status": "CERTIFIED",
+                        "allowed_values": ["OPEN", "CLOSED"],
+                        "governance_tags": ["certified", "exhaustive"],
+                    }
+                },
+            },
+        )
+
+        # 1. Default threshold (max_suggestions_limit = 10)
+        view = mapper.map_entry_to_view(entry)
+        dim_small = next(d for d in view.dimensions if d.name == "category_small")
+        self.assertEqual(len(dim_small.suggestions), 5)
+        self.assertEqual(dim_small.suggestions[0], "Apparel")
+
+        dim_large = next(d for d in view.dimensions if d.name == "category_large")
+        self.assertEqual(dim_large.suggestions, [])  # 12 items >= 10 -> omitted
+
+        # 2. Custom threshold (max_suggestions_limit = 5)
+        self.profile.max_suggestions_limit = 5
+        view_custom = mapper.map_entry_to_view(entry)
+        dim_small_custom = next(d for d in view_custom.dimensions if d.name == "category_small")
+        self.assertEqual(dim_small_custom.suggestions, [])  # 5 items >= 5 -> omitted
+
+        # 3. Tag-based comprehensiveness requirement
+        self.profile.max_suggestions_limit = 10
+        self.profile.suggestions_require_comprehensive_tag = True
+        view_tagged = mapper.map_entry_to_view(entry)
+        dim_small_untagged = next(d for d in view_tagged.dimensions if d.name == "category_small")
+        self.assertEqual(dim_small_untagged.suggestions, [])  # No comprehensive tag -> omitted
+
+        dim_status_tagged = next(d for d in view_tagged.dimensions if d.name == "status_tagged")
+        self.assertEqual(dim_status_tagged.suggestions, ["OPEN", "CLOSED"])  # Has 'exhaustive' tag -> included
 
 
 if __name__ == "__main__":

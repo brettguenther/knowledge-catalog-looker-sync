@@ -84,9 +84,13 @@ Each profile is a YAML document validated against the `MappingProfile` Pydantic 
 | `description` | String | No | `""` | Human-readable explanation of the profile scope and source catalog. |
 | `auto_generate_kpi_measures` | Boolean | No | `false` | When true, automatically synthesizes aggregate `type: sum` measures for certified numeric fields matching financial/KPI keywords. |
 | `use_dimension_groups` | Boolean | No | `true` | When true, automatically maps temporal columns (`TIMESTAMP`, `DATETIME`, `DATE`) to LookML `dimension_group` fields of `type: time`. |
+| `fields_hidden_by_default` | Boolean | No | `false` | When false (default), generated base views follow standard LookML: certified fields are visible by default, uncertified fields explicitly declare `hidden: yes`, and downstream refinements (`curated/*.view.lkml`) remain visible by default. When true, emits `fields_hidden_by_default: yes` on the view and `hidden: no` on certified fields. |
+| `max_suggestions_limit` | Integer | No | `10` | Maximum count threshold for static LookML suggestions. Static `suggestions: [...]` are only emitted if the unique value count is strictly less than this threshold (`< 10`). Non-comprehensive or high-cardinality lists are omitted so Looker dynamically queries BigQuery distinct values. |
+| `suggestions_require_comprehensive_tag` | Boolean | No | `false` | When true, requires a field to have a tag matching `comprehensive_tags` to emit static suggestions. |
+| `comprehensive_tags` | List[String] | No | `["comprehensive", "closed_list", "exhaustive"]` | Tags indicating that a field's allowed values represent an exhaustive, closed list. |
 | `default_timeframes` | List[String] | No | `["raw", "time", "date", "week", "month", "quarter", "year"]` | Timeframes generated for `TIMESTAMP` and `DATETIME` dimension groups. |
 | `date_timeframes` | List[String] | No | `["raw", "date", "week", "month", "quarter", "year"]` | Timeframes generated for `DATE` dimension groups (omits time-of-day). |
-| `certification_rule` | Object | Yes | &mdash; | Rule determining whether an entity is marked certified (`hidden: no`). |
+| `certification_rule` | Object | Yes | &mdash; | Rule determining whether an entity is marked certified (`hidden: no` or visible by default). |
 | `exclusions` | List[Object] | No | `[]` | List of rules matching columns that must be dropped entirely from the generated view. |
 | `field_mappings` | Object | No | `{}` | Parameter-level resolution rules for LookML field attributes. |
 
@@ -95,11 +99,12 @@ Each profile is a YAML document validated against the `MappingProfile` Pydantic 
 ## Certification Rules
 
 The `certification_rule` evaluates whether a table or column meets organizational data governance standards. When certified:
-- The dimension receives `hidden: no`, making it visible to users and Looker Conversational Analytics agents.
+- The dimension is exposed to users and Looker Conversational Analytics agents (visible by default, or with `hidden: no` if `fields_hidden_by_default: true`).
 - Rich semantic parameters (`label`, `description`, `synonyms`, `tags`, `suggestions`, `value_format_name`) are populated.
 
 When uncertified:
-- The dimension is set to `hidden: yes` (or remains hidden under the view-level `fields_hidden_by_default: yes`), preventing field bloat and hallucination in conversational queries.
+- The dimension is set to `hidden: yes` (or suppressed via `fields_hidden_by_default: yes`), preventing field bloat and hallucination in conversational queries.
+- Catalog semantic parameters are stripped, generating a bare SQL field.
 
 ### Schema
 

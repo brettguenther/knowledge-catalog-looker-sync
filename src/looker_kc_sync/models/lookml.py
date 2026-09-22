@@ -58,7 +58,7 @@ class LookMLView(BaseModel):
     view_name: str
     base_view_name: str
     sql_table_name: str
-    fields_hidden_by_default: bool = True
+    fields_hidden_by_default: bool = False
     extension_required: bool = True
     description: Optional[str] = None
     tags: List[str] = Field(default_factory=list)

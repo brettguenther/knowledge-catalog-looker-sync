@@ -2,6 +2,8 @@ profile_name: "collibra_outbound"
 description: "Mapping profile for Collibra outbound Dataplex aspect ingestion"
 auto_generate_kpi_measures: false
 use_dimension_groups: true
+fields_hidden_by_default: false
+max_suggestions_limit: 10
 
 certification_rule:
   path: "collibra_governance.status"

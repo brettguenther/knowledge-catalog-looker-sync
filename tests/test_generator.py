@@ -23,7 +23,7 @@ class TestLookMLGenerator(unittest.TestCase):
             view_name="customers",
             base_view_name="customers_base",
             sql_table_name="`my_proj.my_ds.customers`",
-            fields_hidden_by_default=True,
+            fields_hidden_by_default=False,
             dimensions=[
                 LookMLDimension(
                     name="customer_id",
@@ -34,6 +34,12 @@ class TestLookMLGenerator(unittest.TestCase):
                     label="Customer Identifier",
                     synonyms=["client id", "user id"],
                     tags=["certified"],
+                ),
+                LookMLDimension(
+                    name="internal_code",
+                    type="string",
+                    sql="${TABLE}.internal_code",
+                    hidden=True,
                 ),
             ],
             dimension_groups=[
@@ -61,9 +67,11 @@ class TestLookMLGenerator(unittest.TestCase):
             ],
         )
 
-        # Render base view
+        # Render base view (standard idiomatic pattern: fields_hidden_by_default=False)
         rendered = self.generator.render_base_view(view)
-        self.assertIn("fields_hidden_by_default: yes", rendered)
+        self.assertNotIn("fields_hidden_by_default: yes", rendered)
+        self.assertNotIn("hidden: no", rendered)
+        self.assertIn("hidden: yes", rendered)  # internal_code explicitly hidden
         self.assertIn('synonyms: ["client id", "user id"]', rendered)
 
         # Verify AST parser parses without exception
@@ -80,6 +88,33 @@ class TestLookMLGenerator(unittest.TestCase):
         model = self.generator.render_model("test_model", "test_conn", [view])
         parsed_model = lkml.load(model)
         self.assertEqual(parsed_model["connection"], "test_conn")
+
+    def test_generator_renders_fields_hidden_by_default_override(self):
+        view = LookMLView(
+            view_name="customers",
+            base_view_name="customers_base",
+            sql_table_name="`my_proj.my_ds.customers`",
+            fields_hidden_by_default=True,
+            dimensions=[
+                LookMLDimension(
+                    name="customer_id",
+                    type="string",
+                    sql="${TABLE}.customer_id",
+                    hidden=False,
+                    label="Customer Identifier",
+                ),
+                LookMLDimension(
+                    name="internal_code",
+                    type="string",
+                    sql="${TABLE}.internal_code",
+                    hidden=True,
+                ),
+            ],
+        )
+        rendered = self.generator.render_base_view(view)
+        self.assertIn("fields_hidden_by_default: yes", rendered)
+        self.assertIn("hidden: no", rendered)  # customer_id explicitly exposed
+        self.assertNotIn("hidden: yes", rendered)  # internal_code relies on view-level default
 
     def test_generator_handles_quotes_and_newlines(self):
         view = LookMLView(
