@@ -20,7 +20,7 @@ explore_policy:
   strategy: "tagged" # "tagged", "allowlist", "patterns", "root_only", "all"
   required_tags: ["core_bi", "explore", "fact"]
   table_allowlist: []
-  table_patterns: ["fct_*", "fact_*", "orders"]
+  table_patterns: ["fct_*", "fact_*"]
   exclude_dimension_tables: true
 ```
 

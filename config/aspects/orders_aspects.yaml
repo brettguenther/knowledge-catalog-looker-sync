@@ -51,3 +51,11 @@
     status: DRAFT
     business_label: "Warehouse Location Code"
     business_description: "Internal warehouse routing code."
+
+<PROJECT_ID>.us-central1.semantic-curation@Schema.shipping_amount:
+  data:
+    status: CERTIFIED
+    business_label: "Shipping Amount"
+    format_pattern: "usd"
+    governance_tags: ["certified", "shipping"]
+
