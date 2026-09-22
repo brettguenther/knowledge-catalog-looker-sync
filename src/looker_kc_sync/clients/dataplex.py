@@ -91,9 +91,13 @@ class DataplexCatalogClient:
         partition_fields: List[str] = []
         cluster_fields: List[str] = []
 
-        # 1. Parse aspects
         for aspect_key, aspect_obj in entry.aspects.items():
-            aspect_data_raw = dict(aspect_obj.data) if hasattr(aspect_obj, "data") else {}
+            aspect_data_raw = {}
+            if getattr(aspect_obj, "data", None) is not None:
+                try:
+                    aspect_data_raw = dict(aspect_obj.data)
+                except Exception:
+                    aspect_data_raw = {}
             aspect_data = _proto_to_python(aspect_data_raw)
 
             # Check if this is the native schema aspect
@@ -133,6 +137,18 @@ class DataplexCatalogClient:
                     for col_dq in aspect_data["columns"]:
                         if isinstance(col_dq, dict) and col_dq.get("name"):
                             column_aspects.setdefault(col_dq["name"], {})["data-quality-scorecard"] = col_dq
+
+                # Unpack catalog-published descriptions (DATA_DOCUMENTATION) into per-column aspects
+                if aspect_name == "descriptions" and isinstance(aspect_data, dict):
+                    if aspect_data.get("description"):
+                        table_aspects.setdefault("data-documentation", {})["overview"] = str(aspect_data["description"]).strip()
+                    if isinstance(aspect_data.get("fields"), list):
+                        for f in aspect_data["fields"]:
+                            if isinstance(f, dict) and f.get("name") and f.get("description"):
+                                column_aspects.setdefault(f["name"], {}).setdefault(
+                                    "data-documentation", {}
+                                )["description"] = str(f["description"]).strip()
+
 
                 # Extract partition and cluster keys from bigquery-table aspect
                 if aspect_name == "bigquery-table" and isinstance(aspect_data, dict):
