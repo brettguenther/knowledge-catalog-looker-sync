@@ -35,8 +35,8 @@ class TestSyncOrchestrator(unittest.TestCase):
 
     @patch("looker_kc_sync.orchestrator.LookerClient")
     @patch("looker_kc_sync.orchestrator.DataplexCatalogClient")
-    def test_deploy_only_base_views_invariant(self, mock_dpx_cls, mock_looker_cls):
-        """CRITICAL INVARIANT: Automated deployment must ONLY touch machine-managed base views."""
+    def test_deploy_only_base_layer_invariant(self, mock_dpx_cls, mock_looker_cls):
+        """CRITICAL INVARIANT: Automated deployment must ONLY touch machine-managed base views and base explores."""
         mock_dpx = MagicMock()
         mock_dpx_cls.return_value = mock_dpx
 
@@ -57,13 +57,17 @@ class TestSyncOrchestrator(unittest.TestCase):
         results = orchestrator.run(deploy=True, scaffold=False)
 
         self.assertEqual(results["tables_processed"], 1)
+        self.assertIn("orders", results["explores_generated"])
         self.assertTrue(results["looker_deployed"])
 
-        # Check deployed files
+        # Check deployed files: only views/base/*.base.view.lkml and explores/base/*.base.explore.lkml
         created_files = [call.kwargs.get("file_path") or call.args[1] for call in mock_looker.create_or_update_file.call_args_list]
+        self.assertIn("views/base/orders.base.view.lkml", created_files)
+        self.assertIn("explores/base/orders.base.explore.lkml", created_files)
         for f in created_files:
-            self.assertTrue(f.startswith("views/base/"), f"Automated deploy wrote forbidden non-base file: {f}")
-            self.assertTrue(f.endswith(".base.view.lkml"))
+            is_base_view = f.startswith("views/base/") and f.endswith(".base.view.lkml")
+            is_base_explore = f.startswith("explores/base/") and f.endswith(".base.explore.lkml")
+            self.assertTrue(is_base_view or is_base_explore, f"Automated deploy wrote forbidden non-base file: {f}")
 
         # Verify curated views and model files were NOT deployed
         self.assertNotIn("views/curated/orders.view.lkml", created_files)
@@ -97,6 +101,7 @@ class TestSyncOrchestrator(unittest.TestCase):
 
         # Verify local scaffold files exist
         self.assertTrue((self.out_dir / "views" / "curated" / "orders.view.lkml").exists())
+        self.assertTrue((self.out_dir / "explores" / "base" / "orders.base.explore.lkml").exists())
         self.assertTrue((self.out_dir / "models" / f"{orchestrator.config.model_name}.model.lkml").exists())
 
         # Verify remote deployment was NOT called
@@ -125,7 +130,6 @@ class TestSyncOrchestrator(unittest.TestCase):
         mock_dpx.get_dataset_entries.return_value = [broken_entry, valid_entry]
 
         orchestrator = SyncOrchestrator(str(self.config_file))
-        # Mock mapper to raise on broken_entry only
         orig_map = orchestrator.mapper.map_entry_to_view
 
         def side_effect(e):
@@ -176,9 +180,8 @@ class TestSyncOrchestrator(unittest.TestCase):
         self.assertTrue(results["looker_deployed"])
         fake_catalog.get_dataset_entries.assert_called_once()
         fake_deployer.ensure_dev_mode.assert_called_once()
-        fake_deployer.create_or_update_file.assert_called_once()
+        self.assertEqual(fake_deployer.create_or_update_file.call_count, 2)  # 1 base view + 1 base explore
 
 
 if __name__ == "__main__":
     unittest.main()
-

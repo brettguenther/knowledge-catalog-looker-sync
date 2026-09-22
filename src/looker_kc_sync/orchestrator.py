@@ -12,6 +12,7 @@ from looker_kc_sync.clients.looker import LookerClient
 from looker_kc_sync.generator.engine import LookMLGenerator
 from looker_kc_sync.mapping.engine import SemanticMapper
 from looker_kc_sync.mapping.profile import MappingProfile
+from looker_kc_sync.models.catalog import CatalogEntry
 from looker_kc_sync.models.lookml import LookMLView
 from looker_kc_sync.protocols import CatalogSource, LookMLDeployer
 
@@ -47,6 +48,7 @@ class SyncConfig(BaseSettings):
 
     project_id: str
     location: str = "us-central1"
+    scan_location: str = "us-central1"
     dataset_id: str
     looker_project_id: str
     git_repo: Optional[str] = None
@@ -106,6 +108,7 @@ class SyncOrchestrator:
         self.catalog_client: CatalogSource = catalog_client or DataplexCatalogClient(
             project_id=self.config.project_id,
             location=self.config.location,
+            scan_location=self.config.scan_location,
         )
         self.mapper = SemanticMapper(self.profile)
         self.generator = generator or LookMLGenerator()
@@ -122,6 +125,7 @@ class SyncOrchestrator:
         results: Dict[str, Any] = {
             "tables_processed": 0,
             "views_generated": [],
+            "explores_generated": [],
             "files_written": [],
             "looker_deployed": False,
             "validation_valid": False,
@@ -140,7 +144,9 @@ class SyncOrchestrator:
 
         out_path = Path(self.config.output_dir)
         base_views_dir = out_path / "views" / "base"
+        base_explores_dir = out_path / "explores" / "base"
         base_views_dir.mkdir(parents=True, exist_ok=True)
+        base_explores_dir.mkdir(parents=True, exist_ok=True)
         if scaffold:
             curated_views_dir = out_path / "views" / "curated"
             models_dir = out_path / "models"
@@ -148,13 +154,15 @@ class SyncOrchestrator:
             models_dir.mkdir(parents=True, exist_ok=True)
 
         views: List[LookMLView] = []
-        base_view_files: Dict[str, str] = {}
+        entry_view_pairs: List[tuple[CatalogEntry, LookMLView]] = []
+        managed_files: Dict[str, str] = {}
 
         # 2. Map & Generate Base Views (Machine-managed layer with error isolation)
         for entry in entries:
             try:
                 view = self.mapper.map_entry_to_view(entry)
                 views.append(view)
+                entry_view_pairs.append((entry, view))
                 results["tables_processed"] += 1
                 results["views_generated"].append(view.view_name)
 
@@ -164,16 +172,33 @@ class SyncOrchestrator:
                 base_file_local = out_path / base_file_rel
                 base_file_local.write_text(base_lookml)
                 results["files_written"].append(str(base_file_local))
-                base_view_files[base_file_rel] = base_lookml
+                managed_files[base_file_rel] = base_lookml
             except Exception as e:
                 err_msg = f"Failed to map/generate view for table '{entry.entry_id}': {e}"
                 print(f"Warning: {err_msg}")
                 results["errors"].append(err_msg)
 
-        if not base_view_files:
+        if not managed_files:
             raise RuntimeError(
                 f"All table mappings failed for dataset '{self.config.dataset_id}'. Errors: {results['errors']}"
             )
+
+        # 2b. Map & Generate Base Explores (.base.explore.lkml) with Join & Partition Context
+        views_by_name = {v.view_name: v for v in views}
+        for entry, view in entry_view_pairs:
+            try:
+                explore = self.mapper.map_entry_to_explore(entry, view, views_by_name=views_by_name)
+                explore_lookml = self.generator.render_base_explore(explore)
+                explore_file_rel = f"explores/base/{explore.name}.base.explore.lkml"
+                explore_file_local = out_path / explore_file_rel
+                explore_file_local.write_text(explore_lookml)
+                results["explores_generated"].append(explore.name)
+                results["files_written"].append(str(explore_file_local))
+                managed_files[explore_file_rel] = explore_lookml
+            except Exception as e:
+                err_msg = f"Failed to map/generate explore for table '{entry.entry_id}': {e}"
+                print(f"Warning: {err_msg}")
+                results["errors"].append(err_msg)
 
         # 3. Optional local scaffolding (Starter curated refinements and model file)
         # Curated views (views/curated/) and models (models/) belong strictly to human analytics engineers.
@@ -200,13 +225,13 @@ class SyncOrchestrator:
                 results["files_written"].append(str(model_file_local))
 
         # 4. Deploy to Looker via looker-cli
-        # Automated deployment strictly updates machine-managed base views (views/base/*.base.view.lkml).
+        # Automated deployment strictly updates machine-managed base views and base explores.
         # It MUST NOT deploy curated views or model files.
         if deploy:
             self.looker_client.ensure_dev_mode()
             self.looker_client.checkout_branch(self.config.looker_project_id, "master")
 
-            for rel_path, content in base_view_files.items():
+            for rel_path, content in managed_files.items():
                 self.looker_client.create_or_update_file(
                     project_id=self.config.looker_project_id,
                     file_path=rel_path,
@@ -219,18 +244,18 @@ class SyncOrchestrator:
             results["validation_valid"] = is_valid
             results["validation_message"] = val_msg
 
-        # 5. Open GitOps Pull Request if requested
+        # 5. Open or Update GitOps Pull Request if requested
         if create_pr and self.config.git_repo:
             from looker_kc_sync.clients.git_provider import GitHubProvider
             git_client = GitHubProvider(
                 repo_slug=self.config.git_repo,
                 project_id=self.config.project_id,
             )
-            # Automated GitOps PRs MUST only touch the machine-managed base views (views/base/*.base.view.lkml).
+            # Automated GitOps PRs MUST only touch machine-managed base views and base explores.
             # Curated views (views/curated/) and models (models/) belong to human analytics engineers
             # and must NEVER be modified or included in automated sync PRs.
             pr_res = git_client.create_pull_request(
-                lookml_files=base_view_files,
+                lookml_files=managed_files,
                 base_branch=self.config.git_base_branch,
             )
             results["pr_result"] = pr_res

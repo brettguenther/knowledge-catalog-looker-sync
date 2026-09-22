@@ -1,10 +1,11 @@
-"""Unit tests for GitHubProvider and token resolution."""
+"""Unit tests for GitHubProvider, PR deduplication, and token resolution."""
 
+import json
 import os
 import unittest
 from unittest.mock import MagicMock, patch
 from looker_kc_sync.clients.git_provider import GitHubProvider
-from looker_kc_sync.orchestrator import _expand_env, SyncConfig
+from looker_kc_sync.orchestrator import _expand_env
 
 
 class TestGitProviderAndEnv(unittest.TestCase):
@@ -67,7 +68,58 @@ class TestGitProviderAndEnv(unittest.TestCase):
             self.assertEqual(called_env["GIT_CONFIG_KEY_0"], "http.extraHeader")
             self.assertIn("basic ", called_env["GIT_CONFIG_VALUE_0"])
 
+    def test_find_and_reuse_open_sync_pr(self):
+        """Verifies GitOps PR deduplication reuses an existing open kc-sync/* PR branch and PATCHes it."""
+        provider = GitHubProvider(repo_slug="org/repo", token="test_pat_token")
+
+        open_prs_payload = [
+            {
+                "number": 42,
+                "html_url": "https://github.com/org/repo/pull/42",
+                "head": {"ref": "kc-sync/update-20260920-000000"},
+            }
+        ]
+
+        mock_get_resp = MagicMock()
+        mock_get_resp.read.return_value = json.dumps(open_prs_payload).encode("utf-8")
+        mock_get_resp.__enter__.return_value = mock_get_resp
+
+        mock_patch_resp = MagicMock()
+        mock_patch_resp.read.return_value = json.dumps({"html_url": "https://github.com/org/repo/pull/42"}).encode("utf-8")
+        mock_patch_resp.__enter__.return_value = mock_patch_resp
+
+        def urlopen_side_effect(req, *args, **kwargs):
+            if req.get_method() == "GET":
+                return mock_get_resp
+            elif req.get_method() == "PATCH":
+                return mock_patch_resp
+            raise AssertionError(f"Unexpected HTTP method: {req.get_method()}")
+
+        def git_side_effect(args, **kwargs):
+            res = MagicMock()
+            res.returncode = 0
+            res.stdout = " views/base/orders.base.view.lkml | 2 +-\n" if "--stat" in args else "+hidden: no"
+            return res
+
+        with patch("urllib.request.urlopen", side_effect=urlopen_side_effect) as mock_urlopen:
+            with patch.object(provider, "_run_git", side_effect=git_side_effect) as mock_git:
+                res = provider.create_pull_request(
+                    lookml_files={"views/base/orders.base.view.lkml": "view: orders {}"},
+                    base_branch="master",
+                )
+
+                self.assertFalse(res["pr_created"])
+                self.assertTrue(res["pr_updated"])
+                self.assertEqual(res["branch"], "kc-sync/update-20260920-000000")
+                self.assertEqual(res["pr_url"], "https://github.com/org/repo/pull/42")
+
+                # Verify force push to the reused branch was executed
+                git_calls = [c.args[0] for c in mock_git.call_args_list]
+                self.assertIn(
+                    ["git", "push", "--force", "-u", "origin", "kc-sync/update-20260920-000000"],
+                    git_calls,
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
-

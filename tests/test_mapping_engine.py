@@ -7,7 +7,7 @@ import yaml
 from looker_kc_sync.mapping.profile import MappingProfile
 from looker_kc_sync.mapping.engine import SemanticMapper
 from looker_kc_sync.mapping.transformers import title_case, parse_delimited_list, map_lookup_value
-from looker_kc_sync.models.catalog import CatalogEntry, SchemaColumn
+from looker_kc_sync.models.catalog import CatalogEntry, JoinRelationship, SchemaColumn
 
 
 class TestSemanticMappingEngine(unittest.TestCase):
@@ -185,8 +185,112 @@ class TestSemanticMappingEngine(unittest.TestCase):
         dim_date = next(d for d in view_scalar.dimensions if d.name == "status_date")
         self.assertEqual(dim_date.type, "date_time")
 
+    def test_ai_data_documentation_description_fallback(self):
+        """Verifies DATA_DOCUMENTATION overview and field descriptions populate missing descriptions."""
+        mapper = SemanticMapper(self.profile)
+        entry = CatalogEntry(
+            resource_name="//dataplex/ai_doc",
+            entry_id="fct_orders",
+            display_name="fct_orders",
+            description="",  # Empty native description
+            bigquery_table="project.edg.fct_orders",
+            columns=[
+                SchemaColumn(name="sales_channel", data_type="STRING", description=""),
+            ],
+            table_aspects={
+                "data-documentation": {
+                    "overview": "This table stores comprehensive information about customer transactions."
+                }
+            },
+            column_aspects={
+                "sales_channel": {
+                    "semantic-curation": {"status": "CERTIFIED"},
+                    "data-documentation": {
+                        "description": 'This column contains the method through which a sale was made, such as "InStore" or "Pick Up".'
+                    },
+                }
+            },
+        )
+        view = mapper.map_entry_to_view(entry)
+        self.assertEqual(
+            view.description,
+            "This table stores comprehensive information about customer transactions.",
+        )
+        dim_channel = next(d for d in view.dimensions if d.name == "sales_channel")
+        self.assertIn("InStore", dim_channel.description)
+
+    def test_partition_and_cluster_filter_generation_and_base_explore(self):
+        """Verifies optional YAML config for partition/cluster filter fields and base explore generation with joins."""
+        self.profile.auto_generate_partition_cluster_filters = True
+        self.profile.always_filter_on_partition_key = True
+        mapper = SemanticMapper(self.profile)
+
+        fact_entry = CatalogEntry(
+            resource_name="//dataplex/fct_sales_daily",
+            entry_id="fct_sales_daily",
+            display_name="fct_sales_daily",
+            description="Daily sales fact",
+            bigquery_table="project.retail.fct_sales_daily",
+            columns=[
+                SchemaColumn(name="sale_date", data_type="DATE"),
+                SchemaColumn(name="store_id", data_type="STRING"),
+                SchemaColumn(name="net_sales_amount", data_type="FLOAT"),
+            ],
+            partition_fields=["sale_date"],
+            cluster_fields=["store_id"],
+            joins=[
+                JoinRelationship(
+                    source_table="fct_sales_daily",
+                    target_table="dim_store",
+                    join_keys=[("store_id", "store_id")],
+                )
+            ],
+            column_aspects={
+                "net_sales_amount": {"semantic-curation": {"status": "CERTIFIED"}},
+            },
+        )
+        dim_entry = CatalogEntry(
+            resource_name="//dataplex/dim_store",
+            entry_id="dim_store",
+            display_name="dim_store",
+            bigquery_table="project.retail.dim_store",
+            columns=[SchemaColumn(name="store_id", data_type="STRING")],
+        )
+
+        fact_view = mapper.map_entry_to_view(fact_entry)
+        dim_view = mapper.map_entry_to_view(dim_entry)
+
+        # Verify dedicated filter fields were created for sale_date (partition) and store_id (cluster)
+        filter_names = [f.name for f in fact_view.filters]
+        self.assertIn("sale_date_filter", filter_names)
+        self.assertIn("store_id_filter", filter_names)
+
+        sale_filter = next(f for f in fact_view.filters if f.name == "sale_date_filter")
+        self.assertEqual(sale_filter.type, "date")
+        self.assertEqual(sale_filter.suggest_dimension, "sale_date")
+
+        # Verify partition & cluster dimensions were unhidden and tagged
+        dg_sale = next(dg for dg in fact_view.dimension_groups if dg.name == "sale")
+        self.assertFalse(dg_sale.hidden)
+        self.assertIn("partition_key", dg_sale.tags)
+
+        dim_store_id = next(d for d in fact_view.dimensions if d.name == "store_id")
+        self.assertFalse(dim_store_id.hidden)
+        self.assertIn("cluster_key", dim_store_id.tags)
+
+        # Verify base explore generation with join and partition always_filter
+        explore = mapper.map_entry_to_explore(
+            fact_entry,
+            fact_view,
+            views_by_name={"fct_sales_daily": fact_view, "dim_store": dim_view},
+        )
+        self.assertEqual(explore.name, "fct_sales_daily")
+        self.assertEqual(len(explore.joins), 1)
+        self.assertEqual(explore.joins[0].name, "dim_store")
+        self.assertEqual(explore.joins[0].sql_on, "${fct_sales_daily.store_id} = ${dim_store.store_id}")
+        self.assertEqual(explore.always_filter.get("fct_sales_daily.sale_date"), "30 days")
+
     def test_custom_heuristics_in_profile(self):
-        # Override heuristics on profile: custom KPI keyword and custom PK pattern
         self.profile.auto_generate_kpi_measures = True
         self.profile.kpi_measure_keywords = ["custom_metric"]
         self.profile.kpi_measure_prefix = "agg_"
@@ -210,11 +314,9 @@ class TestSemanticMappingEngine(unittest.TestCase):
         mapper = SemanticMapper(self.profile)
         view = mapper.map_entry_to_view(entry)
 
-        # Verify custom PK pattern was matched
         pk_dim = next(d for d in view.dimensions if d.name == "pk_custom_table")
         self.assertTrue(pk_dim.primary_key)
 
-        # Verify custom KPI keyword and prefix were applied
         measure = next(m for m in view.measures if m.name == "agg_custom_metric_val")
         self.assertEqual(measure.name, "agg_custom_metric_val")
         self.assertEqual(measure.type, "sum")
@@ -287,4 +389,3 @@ class TestSemanticMappingEngine(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

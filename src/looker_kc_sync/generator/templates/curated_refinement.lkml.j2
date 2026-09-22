@@ -1,7 +1,0 @@
-# HUMAN CURATED REFINEMENT LAYER
-# Refines machine-generated base view without modifying base files directly.
-include: "/views/base/{{ view.view_name }}.base.view.lkml"
-
-view: +{{ view.view_name }} {
-  # Add human-curated measures, composite metrics, and drill paths below
-}

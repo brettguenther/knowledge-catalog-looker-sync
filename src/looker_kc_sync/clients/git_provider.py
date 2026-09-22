@@ -1,4 +1,4 @@
-"""Git and GitHub Provider Client for automated branch and PR creation."""
+"""Git and GitHub Provider Client for automated branch and PR creation with open-PR deduplication."""
 
 import base64
 import datetime
@@ -9,11 +9,12 @@ import shutil
 import subprocess
 from typing import Any, Dict, List, Optional
 import urllib.error
+import urllib.parse
 import urllib.request
 
 
 class GitHubProvider:
-    """Manages Git branch creation, committing, pushing, and GitHub PR creation."""
+    """Manages Git branch creation, committing, pushing, and deduplicated GitHub PR creation."""
 
     def __init__(self, repo_slug: str, token: Optional[str] = None, project_id: Optional[str] = None):
         """
@@ -119,6 +120,33 @@ class GitHubProvider:
 
         return res
 
+    def _find_open_sync_pr(self, base_branch: str, branch_prefix: str) -> Optional[Dict[str, Any]]:
+        """Checks GitHub API for an existing open Pull Request matching branch_prefix targeting base_branch."""
+        if not self.token:
+            return None
+        query = urllib.parse.urlencode({"state": "open", "base": base_branch, "per_page": 50})
+        api_url = f"https://api.github.com/repos/{self.repo_slug}/pulls?{query}"
+        req = urllib.request.Request(
+            api_url,
+            headers={
+                "Authorization": f"Bearer {self.token}",
+                "Accept": "application/vnd.github+json",
+                "User-Agent": "looker-kc-sync-bot",
+            },
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(req) as resp:
+                pulls = json.loads(resp.read().decode("utf-8"))
+                if isinstance(pulls, list):
+                    for pr in pulls:
+                        head_ref = (pr.get("head") or {}).get("ref", "")
+                        if head_ref.startswith(branch_prefix):
+                            return pr
+        except Exception:
+            pass
+        return None
+
     def create_pull_request(
         self,
         lookml_files: Dict[str, str],
@@ -128,17 +156,8 @@ class GitHubProvider:
         body: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Clones or stages changes, commits, pushes, and opens a GitHub Pull Request.
-        
-        Args:
-            lookml_files: Dict mapping relative repo file paths to file content strings.
-            base_branch: Base branch to target (e.g. 'master' or 'main').
-            branch_prefix: Prefix for the generated feature branch.
-            title: Title for the Pull Request.
-            body: Markdown body for the Pull Request.
-            
-        Returns:
-            Dict containing pr_created (bool), pr_url (str), branch (str), diff (str).
+        Clones or stages changes, commits, pushes, and opens or updates a GitHub Pull Request.
+        Deduplicates against any existing open PR matching `branch_prefix`.
         """
         if not self.token:
             raise ValueError(
@@ -147,9 +166,10 @@ class GitHubProvider:
             )
 
         timestamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d-%H%M%S")
-        branch_name = f"{branch_prefix}-{timestamp}"
+        existing_pr = self._find_open_sync_pr(base_branch=base_branch, branch_prefix=branch_prefix)
+        branch_name = existing_pr["head"]["ref"] if existing_pr else f"{branch_prefix}-{timestamp}"
         temp_dir = Path("/tmp") / f"git_sync_{timestamp}"
-        
+
         try:
             temp_dir.mkdir(parents=True, exist_ok=True)
             repo_url = f"https://github.com/{self.repo_slug}.git"
@@ -158,18 +178,16 @@ class GitHubProvider:
             clone_cmd = ["git", "clone", "--depth=1", "--branch", base_branch, repo_url, str(temp_dir)]
             self._run_git(clone_cmd)
 
-            # 2. Checkout new feature branch
+            # 2. Checkout new or reused feature branch
             self._run_git(["git", "checkout", "-b", branch_name], cwd=temp_dir)
 
             # 3. Write generated LookML files
-            changed = False
             for rel_path, content in lookml_files.items():
                 target_file = temp_dir / rel_path
                 target_file.parent.mkdir(parents=True, exist_ok=True)
                 existing = target_file.read_text() if target_file.exists() else ""
                 if existing != content:
                     target_file.write_text(content)
-                    changed = True
 
             # 4. Stage specifically the managed LookML files
             for rel_path in lookml_files.keys():
@@ -179,10 +197,11 @@ class GitHubProvider:
 
             diff_stat_res = self._run_git(["git", "diff", "--cached", "--stat"], cwd=temp_dir)
             diff_cached_res = self._run_git(["git", "diff", "--cached"], cwd=temp_dir)
-            
+
             if not diff_stat_res.stdout.strip():
                 return {
                     "pr_created": False,
+                    "pr_updated": False,
                     "message": "No LookML changes detected. Repository is up-to-date.",
                     "diff": "",
                 }
@@ -195,18 +214,58 @@ class GitHubProvider:
             commit_msg = f"feat(lookml): sync knowledge catalog metadata [skip ci]\n\nAutomated metadata sync: {timestamp}"
             self._run_git(["git", "commit", "-m", commit_msg], cwd=temp_dir)
 
-            # 6. Push to remote origin
-            push_cmd = ["git", "push", "-u", "origin", branch_name]
+            # 6. Push to remote origin (force push if updating existing bot branch)
+            push_cmd = (
+                ["git", "push", "--force", "-u", "origin", branch_name]
+                if existing_pr
+                else ["git", "push", "-u", "origin", branch_name]
+            )
             self._run_git(push_cmd, cwd=temp_dir)
 
-            # 7. Open Pull Request via GitHub API
             pr_title = title or f"KC Metadata Sync - {timestamp}"
             pr_body = body or (
                 "### Knowledge Catalog Metadata Synchronization\n\n"
                 "Automated PR generated from Google Cloud Knowledge Catalog (Dataplex).\n\n"
-                "Updates certified attributes, business labels, and semantic metadata across base views."
+                "Updates certified attributes, business labels, semantic metadata, and base explores."
             )
 
+            # 7a. If an open PR already exists, update it in place via PATCH
+            if existing_pr:
+                pr_number = existing_pr["number"]
+                patch_url = f"https://api.github.com/repos/{self.repo_slug}/pulls/{pr_number}"
+                patch_payload = json.dumps({
+                    "title": pr_title,
+                    "body": pr_body,
+                }).encode("utf-8")
+                patch_req = urllib.request.Request(
+                    patch_url,
+                    data=patch_payload,
+                    headers={
+                        "Authorization": f"Bearer {self.token}",
+                        "Accept": "application/vnd.github+json",
+                        "Content-Type": "application/json",
+                        "User-Agent": "looker-kc-sync-bot",
+                    },
+                    method="PATCH",
+                )
+                try:
+                    with urllib.request.urlopen(patch_req) as resp:
+                        resp_data = json.loads(resp.read().decode("utf-8"))
+                except urllib.error.HTTPError as e:
+                    err_body = self._redact(e.read().decode("utf-8", errors="replace"))
+                    raise RuntimeError(f"GitHub API Pull Request update failed (HTTP {e.code}): {err_body}") from None
+
+                pr_url = resp_data.get("html_url", existing_pr.get("html_url", ""))
+                return {
+                    "pr_created": False,
+                    "pr_updated": True,
+                    "pr_url": pr_url,
+                    "branch": branch_name,
+                    "diff": diff_cached_res.stdout,
+                    "message": f"Existing Pull Request updated: {pr_url}",
+                }
+
+            # 7b. Otherwise open a new Pull Request via POST
             api_url = f"https://api.github.com/repos/{self.repo_slug}/pulls"
             payload = json.dumps({
                 "title": pr_title,
@@ -237,6 +296,7 @@ class GitHubProvider:
             pr_url = resp_data.get("html_url", "")
             return {
                 "pr_created": True,
+                "pr_updated": False,
                 "pr_url": pr_url,
                 "branch": branch_name,
                 "diff": diff_cached_res.stdout,

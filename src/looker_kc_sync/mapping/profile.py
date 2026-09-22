@@ -66,6 +66,11 @@ class MappingProfile(BaseModel):
     comprehensive_tags: List[str] = Field(
         default_factory=lambda: ["comprehensive", "closed_list", "exhaustive"]
     )
+    use_ai_data_documentation: bool = True
+    auto_generate_partition_cluster_filters: bool = False
+    unhide_partition_cluster_dimensions: bool = True
+    always_filter_on_partition_key: bool = False
+    default_partition_filter_value: str = "30 days"
     default_timeframes: List[str] = Field(
         default_factory=lambda: ["raw", "time", "date", "week", "month", "quarter", "year"]
     )
@@ -113,4 +118,3 @@ class MappingProfile(BaseModel):
             "DATE": "date_date",
         }
     )
-

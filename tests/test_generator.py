@@ -1,13 +1,15 @@
 """Unit tests for the LookML Generator and lkml validation using standard unittest."""
 
 import unittest
-from pathlib import Path
 import lkml
 
 from looker_kc_sync.generator.engine import LookMLGenerator
 from looker_kc_sync.models.lookml import (
     LookMLDimension,
     LookMLDimensionGroup,
+    LookMLExplore,
+    LookMLExploreJoin,
+    LookMLFilter,
     LookMLMeasure,
     LookMLView,
 )
@@ -16,7 +18,7 @@ from looker_kc_sync.models.lookml import (
 class TestLookMLGenerator(unittest.TestCase):
 
     def setUp(self):
-        self.generator = LookMLGenerator(Path("src/looker_kc_sync/generator/templates"))
+        self.generator = LookMLGenerator()
 
     def test_generator_renders_valid_lookml(self):
         view = LookMLView(
@@ -56,6 +58,15 @@ class TestLookMLGenerator(unittest.TestCase):
                     tags=["certified", "date"],
                 )
             ],
+            filters=[
+                LookMLFilter(
+                    name="created_at_filter",
+                    type="date",
+                    label="Created At Filter",
+                    description="Dedicated partition filter",
+                    suggest_dimension="created_date",
+                )
+            ],
             measures=[
                 LookMLMeasure(
                     name="count",
@@ -73,11 +84,35 @@ class TestLookMLGenerator(unittest.TestCase):
         self.assertNotIn("hidden: no", rendered)
         self.assertIn("hidden: yes", rendered)  # internal_code explicitly hidden
         self.assertIn('synonyms: ["client id", "user id"]', rendered)
+        self.assertIn("filter: created_at_filter", rendered)
 
         # Verify AST parser parses without exception
         parsed = lkml.load(rendered)
         self.assertEqual(len(parsed["views"]), 1)
         self.assertEqual(parsed["views"][0]["name"], "customers")
+        self.assertEqual(parsed["views"][0]["filters"][0]["name"], "created_at_filter")
+
+        # Render base explore
+        explore = LookMLExplore(
+            name="customers",
+            view_name="customers",
+            label="Customers",
+            description="Customer base explore",
+            always_filter={"customers.created_date": "30 days"},
+            joins=[
+                LookMLExploreJoin(
+                    name="regions",
+                    type="left_outer",
+                    relationship="many_to_one",
+                    sql_on="${customers.region_id} = ${regions.region_id}",
+                )
+            ],
+            source_entry="//dataplex/entries/customers",
+        )
+        rendered_explore = self.generator.render_base_explore(explore)
+        parsed_explore = lkml.load(rendered_explore)
+        self.assertEqual(parsed_explore["explores"][0]["name"], "customers")
+        self.assertEqual(parsed_explore["explores"][0]["joins"][0]["name"], "regions")
 
         # Render refinement
         refinement = self.generator.render_curated_refinement(view)
@@ -88,6 +123,7 @@ class TestLookMLGenerator(unittest.TestCase):
         model = self.generator.render_model("test_model", "test_conn", [view])
         parsed_model = lkml.load(model)
         self.assertEqual(parsed_model["connection"], "test_conn")
+        self.assertIn("/explores/base/*.base.explore.lkml", parsed_model["includes"])
 
     def test_generator_renders_fields_hidden_by_default_override(self):
         view = LookMLView(
@@ -175,4 +211,3 @@ class TestLookMLGenerator(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

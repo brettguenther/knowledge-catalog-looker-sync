@@ -1,6 +1,6 @@
 """Pydantic data models representing normalized LookML elements."""
 
-from typing import List, Optional
+from typing import Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
@@ -39,6 +39,16 @@ class LookMLDimensionGroup(BaseModel):
     intervals: List[str] = Field(default_factory=list)
 
 
+class LookMLFilter(BaseModel):
+    """Represents a LookML filter field (e.g. dedicated partition or cluster key filter)."""
+    name: str
+    type: str = "string"
+    label: Optional[str] = None
+    description: Optional[str] = None
+    suggest_dimension: Optional[str] = None
+    default_value: Optional[str] = None
+
+
 class LookMLMeasure(BaseModel):
     """Represents a LookML measure."""
     name: str
@@ -64,5 +74,26 @@ class LookMLView(BaseModel):
     tags: List[str] = Field(default_factory=list)
     dimensions: List[LookMLDimension] = Field(default_factory=list)
     dimension_groups: List[LookMLDimensionGroup] = Field(default_factory=list)
+    filters: List[LookMLFilter] = Field(default_factory=list)
     measures: List[LookMLMeasure] = Field(default_factory=list)
+    source_entry: str = ""
+
+
+class LookMLExploreJoin(BaseModel):
+    """Represents a join block inside a LookML explore."""
+    name: str
+    type: str = "left_outer"
+    relationship: str = "many_to_one"
+    sql_on: str
+
+
+class LookMLExplore(BaseModel):
+    """Represents a LookML base explore definition."""
+    name: str
+    view_name: str
+    label: Optional[str] = None
+    description: Optional[str] = None
+    joins: List[LookMLExploreJoin] = Field(default_factory=list)
+    always_filter: Dict[str, str] = Field(default_factory=dict)
+    conditionally_filter: Dict[str, str] = Field(default_factory=dict)
     source_entry: str = ""

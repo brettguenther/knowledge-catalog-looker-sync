@@ -2,8 +2,9 @@ profile_name: "semantic_curation"
 description: "Reference standard mapping profile for Knowledge Catalog semantic-curation aspect"
 auto_generate_kpi_measures: false
 use_dimension_groups: true
-fields_hidden_by_default: false
-max_suggestions_limit: 10
+use_ai_data_documentation: true
+auto_generate_partition_cluster_filters: false
+always_filter_on_partition_key: false
 
 certification_rule:
   path: "semantic-curation.status"
@@ -25,6 +26,7 @@ field_mappings:
     sources:
       - path: "semantic-curation.business_description"
       - path: "column.description"
+      - path: "data-documentation.description"
 
   synonyms:
     sources:

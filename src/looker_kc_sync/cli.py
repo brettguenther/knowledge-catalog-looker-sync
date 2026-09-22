@@ -19,11 +19,11 @@ def main():
 
 @main.command()
 @click.option("--config", "-c", default="config/sync_config.yaml", help="Path to sync_config.yaml")
-@click.option("--deploy/--no-deploy", default=True, help="Deploy machine-managed base views to Looker project via looker-cli")
-@click.option("--pr", is_flag=True, default=False, help="Create a GitHub Pull Request with the LookML base view changes")
+@click.option("--deploy/--no-deploy", default=True, help="Deploy machine-managed base views and base explores to Looker project via looker-cli")
+@click.option("--pr", is_flag=True, default=False, help="Create or update a GitHub Pull Request with the LookML base view and base explore changes")
 @click.option("--scaffold", is_flag=True, default=False, help="Generate starter curated refinements and model file locally if not present")
 def sync(config: str, deploy: bool, pr: bool, scaffold: bool):
-    """Synchronize Knowledge Catalog metadata to Looker LookML base views."""
+    """Synchronize Knowledge Catalog metadata to Looker LookML base views and base explores."""
     console.print(Panel(
         f"[bold cyan]Starting Knowledge Catalog & Looker Synchronization[/bold cyan]\n"
         f"Config: {config}\nPR Mode: {pr}\nScaffold Local: {scaffold}",
@@ -41,8 +41,10 @@ def sync(config: str, deploy: bool, pr: bool, scaffold: bool):
 
         table.add_row("Tables Processed", str(results["tables_processed"]))
         table.add_row("Views Generated", ", ".join(results["views_generated"]))
+        if results.get("explores_generated"):
+            table.add_row("Base Explores Generated", ", ".join(results["explores_generated"]))
         table.add_row("Local Files Written", str(len(results["files_written"])))
-        table.add_row("Looker Deployed (Base Views)", "Yes" if results["looker_deployed"] else "No (skipped)")
+        table.add_row("Looker Deployed (Base Layer)", "Yes" if results["looker_deployed"] else "No (skipped)")
 
         if results["looker_deployed"]:
             val_status = "[bold green]PASS[/bold green]" if results["validation_valid"] else "[bold red]FAIL[/bold red]"
@@ -52,8 +54,9 @@ def sync(config: str, deploy: bool, pr: bool, scaffold: bool):
 
         if results.get("pr_result"):
             pr_res = results["pr_result"]
-            if pr_res.get("pr_created"):
-                table.add_row("GitHub PR", f"[bold green]{pr_res['pr_url']}[/bold green]")
+            if pr_res.get("pr_created") or pr_res.get("pr_updated"):
+                action_str = "Updated" if pr_res.get("pr_updated") else "Created"
+                table.add_row(f"GitHub PR ({action_str})", f"[bold green]{pr_res['pr_url']}[/bold green]")
                 table.add_row("PR Branch", pr_res.get("branch", ""))
             else:
                 table.add_row("GitHub PR", pr_res.get("message", "No PR created"))

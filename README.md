@@ -31,12 +31,15 @@ flowchart TD
   - Generates discrete categorical `suggestions` from allowed value lists, eliminating runtime sampling queries.
   - Formats metrics with native `value_format_name` mappings (e.g. `usd`, `percent_2`).
 - **Two-Layer Refinement Architecture**:
-  - `views/base/*.base.view.lkml`: Fully machine-generated base views (`view: table`) containing dimensions, measures, and conversational parameters synced directly from Knowledge Catalog.
+  - `views/base/*.base.view.lkml` & `explores/base/*.base.explore.lkml`: Fully machine-generated base views and base explores (with star-schema `join:` relationships from `LookupContext` / `DATA_DOCUMENTATION` and partition/cluster filter rules) synced directly from Knowledge Catalog.
   - `views/curated/*.view.lkml`: Human-authored LookML refinements (`view: +table`), preserving custom measures, drill paths, and composite calculations across automated syncs without modifying base files or duplicating namespaces.
-- **Native Tooling & GitOps CI/CD**:
+- **AI Data Insights & Partition/Cluster Optimization**:
+  - Automatically ingests Dataplex `DATA_DOCUMENTATION` scan overviews and column descriptions as natural-language fallbacks (`use_ai_data_documentation: true`).
+  - Optionally synthesizes dedicated LookML `filter:` fields for BigQuery partition and cluster keys (`auto_generate_partition_cluster_filters`) and explore-level `always_filter` guardrails (`always_filter_on_partition_key`).
+- **Native Tooling & Deduplicated GitOps CI/CD**:
   - Validates generated LookML syntax locally with `lkml` prior to remote staging.
   - Development Mode: Uses `looker-cli` directly for authenticated directory creation, dev-branch checkout, file deployment, and project validation (`validate_project`).
-  - Production GitOps: Sync bot creates dedicated feature branches (`kc-sync/update-...`) and opens automated GitHub Pull Requests scoped strictly to base views, allowing repository CI/CD pipelines (e.g. Looker CI) and analytics engineers to review changes before merging to production.
+  - Production GitOps: Sync bot reuses existing open `kc-sync/*` Pull Requests (`PATCH` + force-push) or opens a new Pull Request scoped strictly to machine-managed base views and base explores.
 
 ## Repository Structure
 
@@ -45,6 +48,8 @@ looker-kc/
 ├── .dockerignore                      # Container build ignore rules
 ├── .env.example                       # Environment variable reference template
 ├── .gitignore                         # Git ignore rules
+├── .resources/
+│   └── ROADMAP_FEATURES.md            # Deferred Data Quality, Tier & Governance roadmap specs
 ├── Dockerfile                         # Cloud Run container definition
 ├── README.md                          # Architecture and operational documentation
 ├── main.py                            # CLI entrypoint wrapper
@@ -63,26 +68,28 @@ looker-kc/
 │       └── dataplex_native.yaml       # Native Dataplex curation profile
 ├── src/
 │   └── looker_kc_sync/
-│       ├── cli.py                     # CLI entrypoint (sync, validate)
+│       ├── cli.py                     # CLI entrypoint (sync, scaffold, validate)
 │       ├── orchestrator.py            # End-to-end sync coordinator & env resolution
 │       ├── clients/
-│       │   ├── dataplex.py            # Dataplex Catalog API client
-│       │   ├── git_provider.py        # GitHub PR provider & Secret Manager client
-│       │   └── looker.py              # looker-cli wrapper (dev mode)
+│       │   ├── dataplex.py            # Dataplex Catalog & DataScan API client
+│       │   ├── git_provider.py        # Deduplicated GitHub PR provider & Secret Manager client
+│       │   └── looker.py              # Looker SDK & looker-cli wrapper (dev mode)
 │       ├── generator/
-│       │   ├── engine.py              # Jinja2 template rendering + lkml validation
-│       │   └── templates/             # LookML templates (base view, refinement, model)
+│       │   └── engine.py              # lkml AST serialization & validation (views, explores, models)
 │       ├── mapping/
-│       │   ├── engine.py              # Core semantic mapping engine
+│       │   ├── engine.py              # Core semantic mapping engine (views & base explores)
 │       │   ├── profile.py             # Pydantic schema for profiles
 │       │   ├── rules.py               # Certification & exclusion rules
 │       │   └── transformers.py        # Value formatters & list parsers
 │       └── models/
-│           ├── catalog.py             # Dataplex entry data models
-│           └── lookml.py              # LookML component data models
+│           ├── catalog.py             # Dataplex entry & join relationship data models
+│           └── lookml.py              # LookML component data models (views, filters, explores)
 └── tests/                             # Unit tests
     ├── test_generator.py
-    └── test_mapping_engine.py
+    ├── test_git_provider.py
+    ├── test_looker_client.py
+    ├── test_mapping_engine.py
+    └── test_orchestrator.py
 ```
 
 ## Quick Start

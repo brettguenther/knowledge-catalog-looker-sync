@@ -1,4 +1,4 @@
-"""Semantic Mapping Engine: Maps Catalog Entries to Normalized LookML Views."""
+"""Semantic Mapping Engine: Maps Catalog Entries to Normalized LookML Views and Base Explores."""
 
 from typing import Any, Dict, List, Optional, Set, Tuple
 from looker_kc_sync.mapping.profile import AttributeMapping, MappingProfile, TagMapping
@@ -18,6 +18,9 @@ from looker_kc_sync.models.catalog import CatalogEntry, SchemaColumn
 from looker_kc_sync.models.lookml import (
     LookMLDimension,
     LookMLDimensionGroup,
+    LookMLExplore,
+    LookMLExploreJoin,
+    LookMLFilter,
     LookMLMeasure,
     LookMLView,
 )
@@ -80,7 +83,7 @@ class SemanticMapper:
         return sorted(list(tags))
 
     def _resolve_table_metadata(self, entry: CatalogEntry) -> Tuple[str, List[str]]:
-        """Extracts table description and governance tags from catalog entry and aspects."""
+        """Extracts table description and governance tags from catalog entry, aspects, and AI Data Documentation."""
         table_desc = entry.description or ""
         table_tags = ["certified"] if evaluate_certification_rule(entry.table_aspects, self.profile.certification_rule) else []
 
@@ -91,6 +94,12 @@ class SemanticMapper:
                 if "governance_tags" in v and isinstance(v["governance_tags"], list):
                     table_tags.extend(v["governance_tags"])
 
+        # Fallback to DATA_DOCUMENTATION overview when enabled and no explicit description is set
+        if not table_desc and self.profile.use_ai_data_documentation:
+            doc_aspect = entry.table_aspects.get("data-documentation")
+            if isinstance(doc_aspect, dict) and doc_aspect.get("overview"):
+                table_desc = str(doc_aspect["overview"]).strip()
+
         return table_desc, sorted(list(set(table_tags)))
 
     def _resolve_column_metadata(
@@ -98,9 +107,14 @@ class SemanticMapper:
         col: SchemaColumn,
         col_aspects: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """Resolves raw attributes from catalog aspects according to profile cascades."""
+        """Resolves raw attributes from catalog aspects according to profile cascades and AI documentation fallback."""
         label = self._resolve_attribute(self.profile.field_mappings.label, col_aspects, col)
         description = self._resolve_attribute(self.profile.field_mappings.description, col_aspects, col) or col.description
+        if not description and self.profile.use_ai_data_documentation:
+            ai_desc = resolve_path_value(col_aspects, "data-documentation.description")
+            if ai_desc:
+                description = str(ai_desc).strip()
+
         synonyms = self._resolve_attribute(self.profile.field_mappings.synonyms, col_aspects, col) or []
         tags = self._resolve_tags(self.profile.field_mappings.tags, col_aspects)
         raw_suggestions = self._resolve_attribute(self.profile.field_mappings.suggestions, col_aspects, col) or []
@@ -150,6 +164,51 @@ class SemanticMapper:
                 return True
         return False
 
+    def _is_partition_or_cluster_key(
+        self,
+        col_name: str,
+        entry: CatalogEntry,
+        col_aspects: Dict[str, Any],
+    ) -> Tuple[bool, bool]:
+        """Returns (is_partition_key, is_cluster_key) for the column."""
+        col_lower = col_name.lower()
+        is_part = any(pf.lower() == col_lower for pf in entry.partition_fields) or bool(
+            resolve_path_value(col_aspects, "bigquery-table.is_partition_key")
+        )
+        is_clust = any(cf.lower() == col_lower for cf in entry.cluster_fields) or bool(
+            resolve_path_value(col_aspects, "bigquery-table.is_cluster_key")
+        )
+        return is_part, is_clust
+
+    def _synthesize_key_filter(
+        self,
+        col: SchemaColumn,
+        meta: Dict[str, Any],
+        raw_type: str,
+        suggest_dim_name: str,
+        is_partition: bool,
+        is_cluster: bool,
+    ) -> LookMLFilter:
+        """Synthesizes a dedicated LookML filter field for a partition or cluster key."""
+        if raw_type in ("TIMESTAMP", "DATETIME", "DATE"):
+            filter_type = "date"
+        elif raw_type in ("INTEGER", "INT64", "FLOAT", "FLOAT64", "NUMERIC", "BIGNUMERIC"):
+            filter_type = "number"
+        elif raw_type in ("BOOLEAN", "BOOL"):
+            filter_type = "yesno"
+        else:
+            filter_type = "string"
+
+        base_label = meta.get("label") or title_case(col.name)
+        key_kind = "Partition & Cluster" if (is_partition and is_cluster) else ("Partition" if is_partition else "Cluster")
+        return LookMLFilter(
+            name=f"{col.name}_filter",
+            type=filter_type,
+            label=f"{base_label} Filter",
+            description=f"Dedicated {key_kind.lower()} key filter for {base_label}.",
+            suggest_dimension=suggest_dim_name,
+        )
+
     def _map_dimension_group(
         self,
         col: SchemaColumn,
@@ -167,7 +226,7 @@ class SemanticMapper:
         datatype = "timestamp" if raw_type == "TIMESTAMP" else ("date" if raw_type == "DATE" else "datetime")
         timeframes = self.profile.date_timeframes if raw_type == "DATE" else self.profile.default_timeframes
         dg_label = clean_dimension_group_label(
-            meta["label"],
+            meta["label"] or title_case(col.name),
             suffixes=self.profile.temporal_label_suffixes,
         )
 
@@ -202,7 +261,7 @@ class SemanticMapper:
             sql=f"${{TABLE}}.{col.name}",
             primary_key=is_pk,
             hidden=not is_certified,
-            label=meta["label"] if is_certified else None,
+            label=(meta["label"] or title_case(col.name)) if is_certified else None,
             description=meta["description"] if is_certified else None,
             synonyms=meta["synonyms"] if is_certified else [],
             tags=meta["tags"] if is_certified else [],
@@ -253,6 +312,7 @@ class SemanticMapper:
 
         dimensions: List[LookMLDimension] = []
         dimension_groups: List[LookMLDimensionGroup] = []
+        filters: List[LookMLFilter] = []
         measures: List[LookMLMeasure] = []
         assigned_names: Set[str] = set()
 
@@ -265,7 +325,18 @@ class SemanticMapper:
                 continue
 
             is_certified = evaluate_certification_rule(col_aspects, self.profile.certification_rule)
+            is_part, is_clust = self._is_partition_or_cluster_key(col.name, entry, col_aspects)
+
+            # Promote visibility if partition/cluster filter generation and unhiding are enabled
+            if (is_part or is_clust) and self.profile.auto_generate_partition_cluster_filters and self.profile.unhide_partition_cluster_dimensions:
+                is_certified = True
+
             meta = self._resolve_column_metadata(col, col_aspects)
+            if is_part and "partition_key" not in meta["tags"]:
+                meta["tags"] = sorted(list(set(meta["tags"] + ["partition_key"])))
+            if is_clust and "cluster_key" not in meta["tags"]:
+                meta["tags"] = sorted(list(set(meta["tags"] + ["cluster_key"])))
+
             raw_type = col.data_type.upper().split("(")[0].strip()
 
             # Handle temporal types as dimension groups
@@ -274,12 +345,36 @@ class SemanticMapper:
                 dg = self._map_dimension_group(col, meta, is_certified, raw_type, other_names)
                 assigned_names.add(dg.name)
                 dimension_groups.append(dg)
+
+                if (is_part or is_clust) and self.profile.auto_generate_partition_cluster_filters:
+                    filters.append(
+                        self._synthesize_key_filter(
+                            col=col,
+                            meta=meta,
+                            raw_type=raw_type,
+                            suggest_dim_name=f"{dg.name}_date",
+                            is_partition=is_part,
+                            is_cluster=is_clust,
+                        )
+                    )
                 continue
 
             # Handle scalar dimension
             dim = self._map_scalar_dimension(col, meta, is_certified, raw_type, view_name)
             assigned_names.add(col.name.lower())
             dimensions.append(dim)
+
+            if (is_part or is_clust) and self.profile.auto_generate_partition_cluster_filters:
+                filters.append(
+                    self._synthesize_key_filter(
+                        col=col,
+                        meta=meta,
+                        raw_type=raw_type,
+                        suggest_dim_name=dim.name,
+                        is_partition=is_part,
+                        is_cluster=is_clust,
+                    )
+                )
 
             # Measure generation for certified numeric KPI fields
             measures.extend(self._synthesize_kpi_measures(col, dim, meta))
@@ -294,6 +389,72 @@ class SemanticMapper:
             tags=table_tags,
             dimensions=dimensions,
             dimension_groups=dimension_groups,
+            filters=filters,
             measures=measures,
+            source_entry=entry.resource_name,
+        )
+
+    def _resolve_field_ref_for_column(self, view: LookMLView, col_name: str) -> str:
+        """Resolves the LookML field name (e.g. 'order_date' for dimension_group 'order' or scalar 'store_id') for a physical column."""
+        expected_sql = f"${{TABLE}}.{col_name}"
+        for dg in view.dimension_groups:
+            if dg.sql == expected_sql:
+                return f"{dg.name}_date" if "date" in dg.timeframes else dg.name
+        for dim in view.dimensions:
+            if dim.sql == expected_sql or dim.name == col_name:
+                return dim.name
+        return col_name
+
+    def map_entry_to_explore(
+        self,
+        entry: CatalogEntry,
+        view: LookMLView,
+        views_by_name: Optional[Dict[str, LookMLView]] = None,
+    ) -> LookMLExplore:
+        """Transforms a CatalogEntry and its LookMLView into a LookMLExplore with joins and partition filters."""
+        explore_label = title_case(view.view_name)
+        explore_desc = view.description or f"Explore for {explore_label}"
+
+        joins: List[LookMLExploreJoin] = []
+        seen_targets: Set[str] = set()
+
+        for rel in entry.joins:
+            target_view_name = rel.target_table.lower().replace("-", "_")
+            if target_view_name == view.view_name or target_view_name in seen_targets:
+                continue
+            if views_by_name is not None and target_view_name not in views_by_name:
+                continue
+
+            target_view = views_by_name.get(target_view_name) if views_by_name else None
+            clauses = []
+            for src_col, tgt_col in rel.join_keys:
+                src_ref = self._resolve_field_ref_for_column(view, src_col)
+                tgt_ref = self._resolve_field_ref_for_column(target_view, tgt_col) if target_view else tgt_col
+                clauses.append(f"${{{view.view_name}.{src_ref}}} = ${{{target_view_name}.{tgt_ref}}}")
+
+            if clauses:
+                seen_targets.add(target_view_name)
+                joins.append(
+                    LookMLExploreJoin(
+                        name=target_view_name,
+                        type=rel.join_type,
+                        relationship=rel.relationship_type,
+                        sql_on=" AND ".join(clauses),
+                    )
+                )
+
+        always_filter: Dict[str, str] = {}
+        if self.profile.always_filter_on_partition_key and entry.partition_fields:
+            for pf in entry.partition_fields:
+                field_ref = self._resolve_field_ref_for_column(view, pf)
+                always_filter[f"{view.view_name}.{field_ref}"] = self.profile.default_partition_filter_value
+
+        return LookMLExplore(
+            name=view.view_name,
+            view_name=view.view_name,
+            label=explore_label,
+            description=explore_desc,
+            joins=joins,
+            always_filter=always_filter,
             source_entry=entry.resource_name,
         )
